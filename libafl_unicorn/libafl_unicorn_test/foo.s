@@ -1,58 +1,53 @@
-	.arch armv7-a
-	.fpu vfpv3-d16
-	.eabi_attribute 28, 1
-	.eabi_attribute 20, 1
-	.eabi_attribute 21, 1
-	.eabi_attribute 23, 3
-	.eabi_attribute 24, 1
-	.eabi_attribute 25, 1
-	.eabi_attribute 26, 2
-	.eabi_attribute 30, 2
-	.eabi_attribute 34, 1
-	.eabi_attribute 18, 4
+	.arch armv8-a
 	.file	"foo.c"
 	.text
-	.section	.text.startup,"ax",%progbits
-	.align	1
-	.p2align 2,,3
+	.section	.text.startup,"ax",@progbits
+	.align	2
+	.p2align 4,,11
 	.global	main
-	.syntax unified
-	.thumb
-	.thumb_func
 	.type	main, %function
 main:
-	@ args = 0, pretend = 0, frame = 8
-	@ frame_needed = 0, uses_anonymous_args = 0
-	@ link register save eliminated.
-	sub	sp, sp, #8
-	ldrb	r2, [sp, #5]	@ zero_extendqisi2
-	ldrb	r3, [sp, #6]	@ zero_extendqisi2
-	cmp	r2, r3
+.LFB0:
+	.cfi_startproc
+	sub	sp, sp, #16
+	.cfi_def_cfa_offset 16
+	ldrb	w1, [sp, 13]
+	ldrb	w0, [sp, 14]
+	and	w0, w0, 255
+	cmp	w0, w1, uxtb
+	bcs	.L3
+	mov	w0, 1
+	strb	w0, [sp, 15]
+	ldrb	w0, [sp, 13]
+	and	w0, w0, 255
+	cmp	w0, 20
 	bls	.L3
-	movs	r3, #1
-	strb	r3, [sp, #7]
-	ldrb	r3, [sp, #5]	@ zero_extendqisi2
-	cmp	r3, #20
-	bls	.L3
-	movs	r3, #2
-	strb	r3, [sp, #7]
-	ldrb	r3, [sp, #5]	@ zero_extendqisi2
-	cmp	r3, #50
+	mov	w0, 2
+	strb	w0, [sp, 15]
+	ldrb	w0, [sp, 13]
+	and	w0, w0, 255
+	cmp	w0, 50
 	beq	.L7
 .L3:
-	ldrb	r0, [sp, #7]	@ zero_extendqisi2
-	add	sp, sp, #8
-	@ sp needed
-	bx	lr
+	ldrb	w0, [sp, 15]
+	add	sp, sp, 16
+	.cfi_remember_state
+	.cfi_def_cfa_offset 0
+	and	w0, w0, 255
+	ret
 .L7:
-	movs	r3, #3
-	strb	r3, [sp, #7]
-	ldrb	r3, [sp, #6]	@ zero_extendqisi2
-	cmp	r3, #24
-	itt	eq
-	moveq	r3, #4
-	strbeq	r3, [sp, #7]
+	.cfi_restore_state
+	mov	w0, 3
+	strb	w0, [sp, 15]
+	ldrb	w0, [sp, 14]
+	and	w0, w0, 255
+	cmp	w0, 24
+	bne	.L3
+	mov	w0, 4
+	strb	w0, [sp, 15]
 	b	.L3
+	.cfi_endproc
+.LFE0:
 	.size	main, .-main
 	.ident	"GCC: (Ubuntu 12.2.0-3ubuntu1) 12.2.0"
-	.section	.note.GNU-stack,"",%progbits
+	.section	.note.GNU-stack,"",@progbits

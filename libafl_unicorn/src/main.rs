@@ -2,10 +2,10 @@ use std::fs::File;
 use std::io::Read;
 
 use unicorn_engine::unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE};
-use unicorn_engine::RegisterARM;
+use unicorn_engine::{RegisterARM, RegisterARM64};
 
 fn callback(
-    unicorn: &mut unicorn_engine::Unicorn<()>,
+    _unicorn: &mut unicorn_engine::Unicorn<()>,
     mem: MemType,
     number: u64,
     size: usize,
@@ -24,33 +24,24 @@ fn emulate() {
     let r_sp = 0x8000;
     let data_size = 0x1000;
 
-    let mut f = File::open("test/a.out").expect("Could not open file");
+    let mut f = File::open("libafl_unicorn_test/a.out").expect("Could not open file");
     let mut buffer = Vec::new();
 
     // read the whole file
     f.read_to_end(&mut buffer).expect("Could not read file");
 
-    let arm_code32 = buffer; /*[
-                                 0x9a, 0x42, 0x15, 0xbf, 0x00, 0x9a, 0x01, 0x9a, 0x78, 0x23, 0x15, 0x23,
-                             ];*/
-    //buffer;
-    // cmp r2, r3; itete
-    // ne; ldrne r2,
-    // [sp]; ldreq r2,
-    // [sp,#4]; movne
-    // r3, #0x78; moveq
-    // r3, #0x15
+    let arm_code = buffer;
 
     // [0x17, 0x00, 0x40, 0xe2]; // sub r0, #23
-    println!("Program length: {}", arm_code32.len());
+    println!("Program length: {}", arm_code.len());
 
-    let mut emu = unicorn_engine::Unicorn::new(Arch::ARM, Mode::LITTLE_ENDIAN)
+    let mut emu = unicorn_engine::Unicorn::new(Arch::ARM64, Mode::LITTLE_ENDIAN)
         .expect("failed to initialize Unicorn instance");
 
     // Define memory regions
     emu.mem_map(
         address,
-        ((arm_code32.len() / 1024) + 1) * 1024,
+        ((arm_code.len() / 1024) + 1) * 1024,
         Permission::ALL,
     )
     .expect("failed to map code page");
@@ -58,13 +49,14 @@ fn emulate() {
         .expect("failed to map data page");
 
     // Write memory
-    emu.mem_write(address, &arm_code32)
+    emu.mem_write(address, &arm_code)
         .expect("failed to write instructions");
     emu.mem_write(r_sp, &[0x2, 0x0])
         .expect("failed to write instructions");
 
     // Set registry
-    emu.reg_write(RegisterARM::SP, r_sp)
+    // TODO: For some reason, the compiled program start by substracting 0x10 to SP
+    emu.reg_write(RegisterARM64::SP, r_sp + 0x10)
         .expect("Could not set registery");
 
     // Add me mory hook
@@ -76,9 +68,11 @@ fn emulate() {
     )
     .expect("Failed to register watcher");
 
+    println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
+
     let result = emu.emu_start(
-        address,
-        address + (arm_code32.len()) as u64,
+        address + 0x40, // start at main. Position of main: 0x40
+        address + (arm_code.len()) as u64,
         10 * SECOND_SCALE,
         0x1000,
     );
@@ -87,36 +81,41 @@ fn emulate() {
         Ok(_) => {
             println!("Ok");
 
-            assert_eq!(emu.reg_read(RegisterARM::R0), Ok(100));
-            assert_eq!(emu.reg_read(RegisterARM::R5), Ok(1337));
+            assert_eq!(emu.reg_read(RegisterARM64::X0), Ok(100));
+            assert_eq!(emu.reg_read(RegisterARM64::X1), Ok(1337));
         }
         Err(err) => {
-            println!();
-            println!("Snap... something went wrong");
-            println!("Error: {:?}", err);
+            if emu.pc_read().unwrap() == 0 {
+                println!("Reached start");
+                println!("Execution successfull ?");
+            } else {
+                println!();
+                println!("Snap... something went wrong");
+                println!("Error: {:?}", err);
 
-            let pc = emu.pc_read().unwrap();
-            println!();
-            println!("Status when crash happened");
+                let pc = emu.pc_read().unwrap();
+                println!();
+                println!("Status when crash happened");
 
-            println!("PC: {:X}", pc);
-            println!("SP: {:X}", emu.reg_read(RegisterARM::SP).unwrap());
-            println!("R0: {:X}", emu.reg_read(RegisterARM::R0).unwrap());
-            println!("R1: {:X}", emu.reg_read(RegisterARM::R1).unwrap());
-            println!("R2: {:X}", emu.reg_read(RegisterARM::R2).unwrap());
-            println!("R3: {:X}", emu.reg_read(RegisterARM::R3).unwrap());
+                println!("PC: {:X}", pc);
+                println!("PC: {:X}", emu.reg_read(RegisterARM64::PC).unwrap());
+                println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
+                println!("X0: {:X}", emu.reg_read(RegisterARM64::X0).unwrap());
+                println!("X1: {:X}", emu.reg_read(RegisterARM64::X1).unwrap());
+                println!("X2: {:X}", emu.reg_read(RegisterARM64::X2).unwrap());
+                println!("X3: {:X}", emu.reg_read(RegisterARM64::X3).unwrap());
 
-            println!();
-            for i in 0..10 {
-                let pos = pc + i * 2 - 10;
+                println!();
+                for i in 0..10 {
+                    let pos = i * 4 + pc - 4 * 5; // Instruction are on 4 bytes
+                    let dec = pos as i64 - pc as i64;
 
-                let read_result = emu.mem_read_as_vec(pos, 2);
-                match read_result {
-                    Ok(data) => {
-                        println!("{:X}: {}:\t 0x{:X}\t0x{:X}", pos, i as i64 - 5, data[0], data[1]);
-                    }
-                    Err(err) => {
-                        println!("{:X} Err: {:?}", pos, err);
+                    let read_result = emu.mem_read_as_vec(pos, 4);
+                    match read_result {
+                        Ok(data) => {
+                            println!("{:X}: {:03}:\t {:02X} {:02X} {:02X} {:02X}  {:08b} {:08b} {:08b} {:08b}", pos, dec, data[0], data[1], data[2], data[3], data[0], data[1], data[2], data[3]);
+                        }
+                        Err(_) => {}
                     }
                 }
             }
