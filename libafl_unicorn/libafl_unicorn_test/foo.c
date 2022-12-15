@@ -1,21 +1,31 @@
 #include <stdint.h>
+#define len 2
 
 int main() {
-  volatile unsigned char a; // = 0x1;
-  volatile unsigned char b; // = 0x0;
-  volatile unsigned char c; // = 0x0;
+  volatile unsigned char a;  // = 0x1;
+  volatile unsigned char b;  // = 0x0;
+  volatile unsigned char c;  // = 0x0;
+
+  /*volatile unsigned char f[len];
+
+  for(int i = 0; i< len; i++){
+    f[i] = i;
+  }*/
 
   if (a > b) {
     c = 0x1;
-    if (a > 20) {
+    if (a > 0x20) {
       c = 0x2;
-      if (a == 50) {
+      if (a == 0x50) {
         c = 0x3;
-        if (b == 24) {
-          c = 0x4;
-        }
+        if (b == 0x24) { c = 0x4; }
       }
     }
   }
+  /*
+  a = 0xDE;
+  b = 0xEA;
+  c = 0xBE;
+  */
   return c;
 }

@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::Read;
 
 use unicorn_engine::unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE};
-use unicorn_engine::{RegisterARM64};
+use unicorn_engine::RegisterARM64;
 
 fn callback(
     _unicorn: &mut unicorn_engine::Unicorn<()>,
@@ -11,14 +11,31 @@ fn callback(
     size: usize,
     other_number: i64,
 ) -> bool {
-    println!("Memory access type: {:?} number: {} size: {} other_number: {}", mem, number, size, other_number);
+    println!(
+        "Memory access type: {:?} number: {} size: {} other_number: {}",
+        mem, number, size, other_number
+    );
     return true;
 }
 
+fn memory_dump(emu: &mut unicorn_engine::Unicorn<()>, len: u64) {
+    let pc = emu.reg_read(RegisterARM64::SP).unwrap();
+    for i in 0..len {
+        let pos = pc - len * 4 + i * 4;
+        
+        let data = emu.mem_read_as_vec(pos, 4).unwrap();
+
+        println!(
+            "{:X}:\t {:02X} {:02X} {:02X} {:02X}  {:08b} {:08b} {:08b} {:08b}",
+            pos, data[0], data[1], data[2], data[3], data[0], data[1], data[2], data[3]
+        );
+    }
+}
+
 fn emulate() {
-    let address = 0x1000;
-    let r_sp = 0x8000;
-    let data_size = 0x1000;
+    let address: u64 = 0x1000;
+    let r_sp: u64 = 0x8000;
+    let data_size: usize = 0x100;
 
     let mut f = File::open("libafl_unicorn_test/a.out").expect("Could not open file");
     let mut buffer = Vec::new();
@@ -35,25 +52,42 @@ fn emulate() {
         .expect("failed to initialize Unicorn instance");
 
     // Define memory regions
+
     emu.mem_map(
         address,
         ((arm_code.len() / 1024) + 1) * 1024,
-        Permission::ALL,
+        Permission::EXEC,
     )
     .expect("failed to map code page");
-    emu.mem_map(r_sp, data_size * 8, Permission::ALL)
-        .expect("failed to map data page");
+
+    // TODO: For some reason, the compiled program start by substracting 0x10 to SP
+    println!(
+        "Registering memory from {:#X} to {:#X} size: {:} ",
+        r_sp - (data_size as u64) * 8,
+        r_sp,
+        data_size * 8
+    );
+    emu.mem_map(
+        r_sp - (data_size as u64) * 8,
+        data_size * 8,
+        Permission::ALL,
+    )
+    .expect("failed to map data page");
 
     // Write memory
     emu.mem_write(address, &arm_code)
         .expect("failed to write instructions");
-    emu.mem_write(r_sp, &[0x2, 0x0])
-        .expect("failed to write instructions");
 
     // Set registry
     // TODO: For some reason, the compiled program start by substracting 0x10 to SP
-    emu.reg_write(RegisterARM64::SP, r_sp + 0x10)
+    emu.reg_write(RegisterARM64::SP, r_sp)
         .expect("Could not set registery");
+
+    // TODO specific values
+    emu.mem_write(r_sp - 0x10, &[0x50, 0x24])
+        .expect("failed to write instructions");
+
+    memory_dump(&mut emu, 5);
 
     // Add me mory hook
     emu.add_mem_hook(
@@ -63,7 +97,6 @@ fn emulate() {
         callback,
     )
     .expect("Failed to register watcher");
-
 
     emu.add_mem_hook(
         HookType::MEM_READ,
@@ -101,6 +134,8 @@ fn emulate() {
             if emu.pc_read().unwrap() == 0 {
                 println!("Reached start");
                 println!("Execution successfull ?");
+
+                memory_dump(&mut emu, 5);
             } else {
                 println!();
                 println!("Snap... something went wrong");
@@ -111,7 +146,6 @@ fn emulate() {
                 println!("Status when crash happened");
 
                 println!("PC: {:X}", pc);
-                println!("PC: {:X}", emu.reg_read(RegisterARM64::PC).unwrap());
                 println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
                 println!("X0: {:X}", emu.reg_read(RegisterARM64::X0).unwrap());
                 println!("X1: {:X}", emu.reg_read(RegisterARM64::X1).unwrap());

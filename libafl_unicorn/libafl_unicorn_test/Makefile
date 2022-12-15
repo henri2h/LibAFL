@@ -7,4 +7,5 @@ assembly:
 binary:
 	$(class)-as foo.s
 
+all: assembly binary
 # sudo apt install gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu
