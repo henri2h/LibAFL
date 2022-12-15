@@ -1,9 +1,18 @@
 [package]
 name = "unicorn_test"
-version = "0.1.0"
+version.workspace = true
+authors = [""]
+description = "Frida backend library for LibAFL"
+documentation = "https://docs.rs/"
+repository = "https://github.com/AFLplusplus/"
+readme = "../README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["fuzzing", "unicorn"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+categories = ["development-tools::testing", "emulators", "embedded", "os", "no-std"]
 
 [dependencies]
+#libafl = { path = "../libafl", default-features = false, version = "0.8.2", features = ["std", "libafl_derive", "frida_cli"] }
+#libafl_targets = { path = "../libafl_targets", version = "0.8.2", features = ["std", "sancov_cmplog"] }
+
 unicorn-engine = "2.0.1"

@@ -54,5 +54,5 @@ main:
 	strbeq	r3, [sp, #7]
 	b	.L3
 	.size	main, .-main
-	.ident	"GCC: (Ubuntu 11.3.0-1ubuntu1~22.04) 11.3.0"
+	.ident	"GCC: (Ubuntu 12.2.0-3ubuntu1) 12.2.0"
 	.section	.note.GNU-stack,"",%progbits

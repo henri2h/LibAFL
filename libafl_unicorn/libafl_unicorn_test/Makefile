@@ -5,3 +5,5 @@ assembly:
 
 binary:
 	arm-linux-gnueabihf-as foo.s
+
+# sudo apt install gcc-arm-linux-gnueabihf
