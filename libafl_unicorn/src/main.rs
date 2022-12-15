@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::Read;
 
 use unicorn_engine::unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE};
-use unicorn_engine::{RegisterARM, RegisterARM64};
+use unicorn_engine::{RegisterARM64};
 
 fn callback(
     _unicorn: &mut unicorn_engine::Unicorn<()>,
@@ -11,11 +11,7 @@ fn callback(
     size: usize,
     other_number: i64,
 ) -> bool {
-    println!(
-        "Bad registration done number: {}, size: {}, other_number: {}",
-        number, size, other_number
-    );
-    println!("MemType: {:?}", mem);
+    println!("Memory access type: {:?} number: {} size: {} other_number: {}", mem, number, size, other_number);
     return true;
 }
 
@@ -62,6 +58,23 @@ fn emulate() {
     // Add me mory hook
     emu.add_mem_hook(
         HookType::MEM_WRITE_UNMAPPED,
+        r_sp,
+        r_sp + (data_size) as u64,
+        callback,
+    )
+    .expect("Failed to register watcher");
+
+
+    emu.add_mem_hook(
+        HookType::MEM_READ,
+        r_sp,
+        r_sp + (data_size) as u64,
+        callback,
+    )
+    .expect("Failed to register watcher");
+
+    emu.add_mem_hook(
+        HookType::MEM_FETCH,
         r_sp,
         r_sp + (data_size) as u64,
         callback,
