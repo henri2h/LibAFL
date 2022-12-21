@@ -20,7 +20,7 @@ main:
 	strb	w0, [sp, 15]
 	ldrb	w0, [sp, 13]
 	and	w0, w0, 255
-	cmp	w0, 35
+	cmp	w0, 32
 	bls	.L3
 	mov	w0, 2
 	strb	w0, [sp, 15]
@@ -29,12 +29,6 @@ main:
 	cmp	w0, 80
 	beq	.L7
 .L3:
-	mov	w0, -34
-	strb	w0, [sp, 13]
-	mov	w0, -22
-	strb	w0, [sp, 14]
-	mov	w0, -66
-	strb	w0, [sp, 15]
 	ldrb	w0, [sp, 15]
 	add	sp, sp, 16
 	.cfi_remember_state

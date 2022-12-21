@@ -32,6 +32,10 @@ fn memory_dump(emu: &mut unicorn_engine::Unicorn<()>, len: u64) {
     }
 }
 
+fn block_hook(emu: &mut unicorn_engine::Unicorn<()>, data:u64, small:u32){
+    println!("Block hook: {:X} {}", data, small);
+}
+
 fn emulate() {
     let address: u64 = 0x1000;
     let r_sp: u64 = 0x8000;
@@ -84,7 +88,8 @@ fn emulate() {
         .expect("Could not set registery");
 
     // TODO specific values
-    emu.mem_write(r_sp - 0x10, &[0x50, 0x24])
+    let mem_data = [0x50, 0x20, 0x0];
+    emu.mem_write(r_sp-(mem_data.len() as u64), &mem_data)
         .expect("failed to write instructions");
 
     memory_dump(&mut emu, 5);
@@ -113,6 +118,8 @@ fn emulate() {
         callback,
     )
     .expect("Failed to register watcher");
+
+    emu.add_block_hook(block_hook).expect("Failed to register code hook");
 
     println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
 
