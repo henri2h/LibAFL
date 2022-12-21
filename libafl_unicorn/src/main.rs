@@ -7,14 +7,26 @@ use unicorn_engine::RegisterARM64;
 fn callback(
     _unicorn: &mut unicorn_engine::Unicorn<()>,
     mem: MemType,
-    number: u64,
+    address: u64,
     size: usize,
-    other_number: i64,
+    value: i64,
 ) -> bool {
-    println!(
-        "Memory access type: {:?} number: {} size: {} other_number: {}",
-        mem, number, size, other_number
-    );
+    match mem {
+        MemType::WRITE => println!(
+            "Memory is being WRITTEN at adress: {:X} size: {} value: {}",
+            address, size, value
+        ),
+        MemType::READ => println!(
+            "Memory is being READ at adress: {:X} size: {}",
+            address, size
+        ),
+
+        _ => println!(
+            "Memory access type: {:?} adress: {:X} size: {} value: {}",
+            mem, address, size, value
+        ),
+    }
+
     return true;
 }
 
@@ -22,7 +34,7 @@ fn memory_dump(emu: &mut unicorn_engine::Unicorn<()>, len: u64) {
     let pc = emu.reg_read(RegisterARM64::SP).unwrap();
     for i in 0..len {
         let pos = pc - len * 4 + i * 4;
-        
+
         let data = emu.mem_read_as_vec(pos, 4).unwrap();
 
         println!(
@@ -32,7 +44,7 @@ fn memory_dump(emu: &mut unicorn_engine::Unicorn<()>, len: u64) {
     }
 }
 
-fn block_hook(emu: &mut unicorn_engine::Unicorn<()>, data:u64, small:u32){
+fn block_hook(emu: &mut unicorn_engine::Unicorn<()>, data: u64, small: u32) {
     println!("Block hook: {:X} {}", data, small);
 }
 
@@ -89,37 +101,22 @@ fn emulate() {
 
     // TODO specific values
     let mem_data = [0x50, 0x20, 0x0];
-    emu.mem_write(r_sp-(mem_data.len() as u64), &mem_data)
+    emu.mem_write(r_sp - (mem_data.len() as u64), &mem_data)
         .expect("failed to write instructions");
 
-    memory_dump(&mut emu, 5);
+    memory_dump(&mut emu, 2);
 
     // Add me mory hook
     emu.add_mem_hook(
-        HookType::MEM_WRITE_UNMAPPED,
+        HookType::MEM_ALL,
+        r_sp - (data_size) as u64,
         r_sp,
-        r_sp + (data_size) as u64,
         callback,
     )
     .expect("Failed to register watcher");
 
-    emu.add_mem_hook(
-        HookType::MEM_READ,
-        r_sp,
-        r_sp + (data_size) as u64,
-        callback,
-    )
-    .expect("Failed to register watcher");
-
-    emu.add_mem_hook(
-        HookType::MEM_FETCH,
-        r_sp,
-        r_sp + (data_size) as u64,
-        callback,
-    )
-    .expect("Failed to register watcher");
-
-    emu.add_block_hook(block_hook).expect("Failed to register code hook");
+    emu.add_block_hook(block_hook)
+        .expect("Failed to register code hook");
 
     println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
 
@@ -142,7 +139,7 @@ fn emulate() {
                 println!("Reached start");
                 println!("Execution successfull ?");
 
-                memory_dump(&mut emu, 5);
+                memory_dump(&mut emu, 2);
             } else {
                 println!();
                 println!("Snap... something went wrong");
