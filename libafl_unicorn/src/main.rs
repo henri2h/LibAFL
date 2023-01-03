@@ -4,6 +4,8 @@ use std::io::Read;
 use unicorn_engine::unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE};
 use unicorn_engine::RegisterARM64;
 
+static mut PREV_LOC: u64 = 0;
+
 fn callback(
     _unicorn: &mut unicorn_engine::Unicorn<()>,
     mem: MemType,
@@ -44,8 +46,12 @@ fn memory_dump(emu: &mut unicorn_engine::Unicorn<()>, len: u64) {
     }
 }
 
-fn block_hook(emu: &mut unicorn_engine::Unicorn<()>, data: u64, small: u32) {
-    println!("Block hook: {:X} {}", data, small);
+fn block_hook(emu: &mut unicorn_engine::Unicorn<()>, address: u64, small: u32) {
+    println!("Block hook: address: {:X} {}", address, small);
+
+    unsafe {
+        PREV_LOC = address;
+    }
 }
 
 fn emulate() {
@@ -107,13 +113,8 @@ fn emulate() {
     memory_dump(&mut emu, 2);
 
     // Add me mory hook
-    emu.add_mem_hook(
-        HookType::MEM_ALL,
-        r_sp - (data_size) as u64,
-        r_sp,
-        callback,
-    )
-    .expect("Failed to register watcher");
+    emu.add_mem_hook(HookType::MEM_ALL, r_sp - (data_size) as u64, r_sp, callback)
+        .expect("Failed to register watcher");
 
     emu.add_block_hook(block_hook)
         .expect("Failed to register code hook");
