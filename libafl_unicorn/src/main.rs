@@ -1,3 +1,4 @@
+pub mod emu;
 pub mod helper;
 pub mod hooks;
 
@@ -14,158 +15,157 @@ use libafl::{inputs::UsesInput, state::HasMetadata};
 
 pub use libafl_targets::{edges_max_num, EDGES_MAP, EDGES_MAP_PTR, EDGES_MAP_SIZE, MAX_EDGES_NUM};
 
+use crate::emu::harness;
 use crate::helper::{hash_me, memory_dump};
 use crate::hooks::block_hook;
 
-fn callback(
-    _unicorn: &mut unicorn_engine::Unicorn<()>,
-    mem: MemType,
-    address: u64,
-    size: usize,
-    value: i64,
-) -> bool {
-    match mem {
-        MemType::WRITE => println!(
-            "Memory is being WRITTEN at adress: {:X} size: {} value: {}",
-            address, size, value
-        ),
-        MemType::READ => println!(
-            "Memory is being READ at adress: {:X} size: {}",
-            address, size
-        ),
+use std::path::PathBuf;
+#[cfg(windows)]
+use std::ptr::write_volatile;
 
-        _ => println!(
-            "Memory access type: {:?} adress: {:X} size: {} value: {}",
-            mem, address, size, value
-        ),
-    }
-
-    return true;
-}
+#[cfg(feature = "tui")]
+use libafl::monitors::tui::TuiMonitor;
+#[cfg(not(feature = "tui"))]
+use libafl::monitors::SimpleMonitor;
+use libafl::{
+    bolts::{current_nanos, rands::StdRand, tuples::tuple_list, AsSlice},
+    corpus::{InMemoryCorpus, OnDiskCorpus},
+    events::SimpleEventManager,
+    corpus::{CachedOnDiskCorpus, Corpus, OnDiskCorpus},
+    executors::{inprocess::InProcessExecutor, ExitKind, TimeoutExecutor},
+    feedback_or, feedback_or_fast,
+    feedbacks::{CrashFeedback, MaxMapFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
+    fuzzer::{Fuzzer, StdFuzzer},
+    generators::{RandPrintablesGenerator, RandBytesGenerator},
+    inputs::{BytesInput, HasTargetBytes},
+    mutators::scheduled::{havoc_mutations, StdScheduledMutator},
+    monitors::MultiMonitor,
+    observers::{HitcountsMapObserver, TimeObserver, VariableMapObserver},
+    schedulers::{QueueScheduler, IndexesLenTimeMinimizerScheduler},
+    stages::mutational::StdMutationalStage,
+    state::StdState,
+};
 
 // emulating
 
-fn emulate() {
-    let address: u64 = 0x1000;
-    let r_sp: u64 = 0x8000;
-    let data_size: usize = 0x100;
+fn main() {
 
-    let mut f = File::open("libafl_unicorn_test/a.out").expect("Could not open file");
-    let mut buffer = Vec::new();
+    let monitor = MultiMonitor::new(|s| println!("{s}"));
+    // The event manager handle the various events generated during the fuzzing loop
+    // such as the notification of the addition of a new item to the corpus
+    let mut mgr = SimpleEventManager::new(monitor);
 
-    // read the whole file
-    f.read_to_end(&mut buffer).expect("Could not read file");
+    let edges = unsafe { &mut hooks::EDGES_MAP };
+    let edges_counter = unsafe { &mut hooks::MAX_EDGES_NUM };
+    let edges_observer =
+        HitcountsMapObserver::new(VariableMapObserver::new("edges", edges, edges_counter));
 
-    let arm_code = buffer;
+    // Create an observation channel to keep track of the execution time
+    let time_observer = TimeObserver::new("time");
 
-    // [0x17, 0x00, 0x40, 0xe2]; // sub r0, #23
-    println!("Program length: {}", arm_code.len());
-
-    let mut emu = unicorn_engine::Unicorn::new(Arch::ARM64, Mode::LITTLE_ENDIAN)
-        .expect("failed to initialize Unicorn instance");
-
-    // Define memory regions
-
-    emu.mem_map(
-        address,
-        ((arm_code.len() / 1024) + 1) * 1024,
-        Permission::EXEC,
-    )
-    .expect("failed to map code page");
-
-    // TODO: For some reason, the compiled program start by substracting 0x10 to SP
-    println!(
-        "Registering memory from {:#X} to {:#X} size: {:} ",
-        r_sp - (data_size as u64) * 8,
-        r_sp,
-        data_size * 8
-    );
-    emu.mem_map(
-        r_sp - (data_size as u64) * 8,
-        data_size * 8,
-        Permission::ALL,
-    )
-    .expect("failed to map data page");
-
-    // Write memory
-    emu.mem_write(address, &arm_code)
-        .expect("failed to write instructions");
-
-    // Set registry
-    // TODO: For some reason, the compiled program start by substracting 0x10 to SP
-    emu.reg_write(RegisterARM64::SP, r_sp)
-        .expect("Could not set registery");
-
-    // TODO specific values
-    let mem_data = [0x50, 0x20, 0x0];
-    emu.mem_write(r_sp - (mem_data.len() as u64), &mem_data)
-        .expect("failed to write instructions");
-
-    memory_dump(&mut emu, 2);
-
-    // Add me mory hook
-    emu.add_mem_hook(HookType::MEM_ALL, r_sp - (data_size) as u64, r_sp, callback)
-        .expect("Failed to register watcher");
-
-    emu.add_block_hook(block_hook)
-        .expect("Failed to register code hook");
-
-    println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
-
-    let result = emu.emu_start(
-        address + 0x40, // start at main. Position of main: 0x40
-        address + (arm_code.len()) as u64,
-        10 * SECOND_SCALE,
-        0x1000,
+    // Feedback to rate the interestingness of an input
+    // This one is composed by two Feedbacks in OR
+    let mut feedback = feedback_or!(
+        // New maximization map feedback linked to the edges observer and the feedback state
+        MaxMapFeedback::new_tracking(&edges_observer, true, false),
+        // Time feedback, this one does not need a feedback state
+        TimeFeedback::new_with_observer(&time_observer)
     );
 
-    match result {
-        Ok(_) => {
-            println!("Ok");
+    // A feedback to choose if an input is a solution or not
+    let mut objective = feedback_or_fast!(CrashFeedback::new(), TimeoutFeedback::new());
 
-            assert_eq!(emu.reg_read(RegisterARM64::X0), Ok(100));
-            assert_eq!(emu.reg_read(RegisterARM64::X1), Ok(1337));
-        }
-        Err(err) => {
-            if emu.pc_read().unwrap() == 0 {
-                println!("Reached start");
-                println!("Execution successfull ?");
+    // create a State from scratch
+    let mut state = StdState::new(
+        // RNG
+        StdRand::with_seed(current_nanos()),
+        // Corpus that will be evolved, we keep it in memory for performance
+        InMemoryCorpus::new(),
+        // Corpus in which we store solutions (crashes in this example),
+        // on disk so the user can get them after stopping the fuzzer
+        OnDiskCorpus::new(PathBuf::from("./crashes")).unwrap(),
+        // States of the feedbacks.
+        // The feedbacks can report the data that should persist in the State.
+        &mut feedback,
+        // Same for objective feedbacks
+        &mut objective,
+    )
+    .unwrap();
 
-                memory_dump(&mut emu, 2);
-            } else {
-                println!();
-                println!("Snap... something went wrong");
-                println!("Error: {:?}", err);
 
-                let pc = emu.pc_read().unwrap();
-                println!();
-                println!("Status when crash happened");
+    // A minimization+queue policy to get testcasess from the corpus
+    let scheduler = IndexesLenTimeMinimizerScheduler::new(QueueScheduler::new());
 
-                println!("PC: {:X}", pc);
-                println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
-                println!("X0: {:X}", emu.reg_read(RegisterARM64::X0).unwrap());
-                println!("X1: {:X}", emu.reg_read(RegisterARM64::X1).unwrap());
-                println!("X2: {:X}", emu.reg_read(RegisterARM64::X2).unwrap());
-                println!("X3: {:X}", emu.reg_read(RegisterARM64::X3).unwrap());
+    // A fuzzer with feedbacks and a corpus scheduler
+    let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
-                println!();
-                for i in 0..10 {
-                    let pos = i * 4 + pc - 4 * 5; // Instruction are on 4 bytes
-                    let dec = pos as i64 - pc as i64;
 
-                    let read_result = emu.mem_read_as_vec(pos, 4);
-                    match read_result {
-                        Ok(data) => {
-                            println!("{:X}: {:03}:\t {:02X} {:02X} {:02X} {:02X}  {:08b} {:08b} {:08b} {:08b}", pos, dec, data[0], data[1], data[2], data[3], data[0], data[1], data[2], data[3]);
-                        }
-                        Err(_) => {}
-                    }
-                }
-            }
-        }
+    let mut hooks =
+    QemuHooks::new(emulator, tuple_list!(QemuEdgeCoverageHelper::default()));
+
+let executor = QemuExecutor::new(
+    &mut hooks,
+    &mut harness,
+    tuple_list!(edges_observer, time_observer),
+    &mut fuzzer,
+    &mut state,
+    &mut mgr,
+)?;
+ // In case the corpus is empty (on first run), reset
+ if state.corpus().count() < 1 {
+    if self.input_dirs.is_empty() {
+        // Generator of printable bytearrays of max size 32
+        let mut generator = RandBytesGenerator::new(32);
+
+        // Generate 8 initial inputs
+        state
+            .generate_initial_inputs(
+                &mut fuzzer,
+                &mut executor,
+                &mut generator,
+                &mut mgr,
+                8,
+            )
+            .expect("Failed to generate the initial corpus");
+        println!(
+            "We imported {} inputs from the generator.",
+            state.corpus().count()
+        );
+    } else {
+        println!("Loading from {:?}", &self.input_dirs);
+        // Load from disk
+        state
+            .load_initial_inputs(
+                &mut fuzzer,
+                &mut executor,
+                &mut mgr,
+                self.input_dirs,
+            )
+            .unwrap_or_else(|_| {
+                panic!("Failed to load initial corpus at {:?}", &self.input_dirs);
+            });
+        println!("We imported {} inputs from disk.", state.corpus().count());
     }
 }
 
-fn main() {
-    emulate();
+let mut executor = TimeoutExecutor::new(executor, timeout);
+
+
+    let mut executor = TimeoutExecutor::new(executor, timeout);
+
+    // Generator of printable bytearrays of max size 32
+    let mut generator = RandPrintablesGenerator::new(32);
+
+    // Generate 8 initial inputs
+    state
+        .generate_initial_inputs(&mut fuzzer, &mut executor, &mut generator, &mut mgr, 8)
+        .expect("Failed to generate the initial corpus");
+
+    // Setup a mutational stage with a basic bytes mutator
+    let mutator = StdScheduledMutator::new(havoc_mutations());
+    let mut stages = tuple_list!(StdMutationalStage::new(mutator));
+
+    fuzzer
+        .fuzz_loop(&mut stages, &mut executor, &mut state, &mut mgr)
+        .expect("Error in the fuzzing loop");
 }
