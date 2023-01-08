@@ -1,10 +1,21 @@
+pub mod helper;
+pub mod hooks;
+
 use std::fs::File;
 use std::io::Read;
 
 use unicorn_engine::unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE};
 use unicorn_engine::RegisterARM64;
 
-static mut PREV_LOC: u64 = 0;
+use std::{cell::UnsafeCell, cmp::max};
+
+use hashbrown::{hash_map::Entry, HashMap};
+use libafl::{inputs::UsesInput, state::HasMetadata};
+
+pub use libafl_targets::{edges_max_num, EDGES_MAP, EDGES_MAP_PTR, EDGES_MAP_SIZE, MAX_EDGES_NUM};
+
+use crate::helper::{hash_me, memory_dump};
+use crate::hooks::block_hook;
 
 fn callback(
     _unicorn: &mut unicorn_engine::Unicorn<()>,
@@ -32,27 +43,7 @@ fn callback(
     return true;
 }
 
-fn memory_dump(emu: &mut unicorn_engine::Unicorn<()>, len: u64) {
-    let pc = emu.reg_read(RegisterARM64::SP).unwrap();
-    for i in 0..len {
-        let pos = pc - len * 4 + i * 4;
-
-        let data = emu.mem_read_as_vec(pos, 4).unwrap();
-
-        println!(
-            "{:X}:\t {:02X} {:02X} {:02X} {:02X}  {:08b} {:08b} {:08b} {:08b}",
-            pos, data[0], data[1], data[2], data[3], data[0], data[1], data[2], data[3]
-        );
-    }
-}
-
-fn block_hook(emu: &mut unicorn_engine::Unicorn<()>, address: u64, small: u32) {
-    println!("Block hook: address: {:X} {}", address, small);
-
-    unsafe {
-        PREV_LOC = address;
-    }
-}
+// emulating
 
 fn emulate() {
     let address: u64 = 0x1000;
