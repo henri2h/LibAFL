@@ -29,19 +29,19 @@ use libafl::monitors::tui::TuiMonitor;
 use libafl::monitors::SimpleMonitor;
 use libafl::{
     bolts::{current_nanos, rands::StdRand, tuples::tuple_list, AsSlice},
+    corpus::{CachedOnDiskCorpus, Corpus, OnDiskCorpus},
     corpus::{InMemoryCorpus, OnDiskCorpus},
     events::SimpleEventManager,
-    corpus::{CachedOnDiskCorpus, Corpus, OnDiskCorpus},
     executors::{inprocess::InProcessExecutor, ExitKind, TimeoutExecutor},
     feedback_or, feedback_or_fast,
     feedbacks::{CrashFeedback, MaxMapFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
-    generators::{RandPrintablesGenerator, RandBytesGenerator},
+    generators::{RandBytesGenerator, RandPrintablesGenerator},
     inputs::{BytesInput, HasTargetBytes},
-    mutators::scheduled::{havoc_mutations, StdScheduledMutator},
     monitors::MultiMonitor,
+    mutators::scheduled::{havoc_mutations, StdScheduledMutator},
     observers::{HitcountsMapObserver, TimeObserver, VariableMapObserver},
-    schedulers::{QueueScheduler, IndexesLenTimeMinimizerScheduler},
+    schedulers::{IndexesLenTimeMinimizerScheduler, QueueScheduler},
     stages::mutational::StdMutationalStage,
     state::StdState,
 };
@@ -49,7 +49,6 @@ use libafl::{
 // emulating
 
 fn main() {
-
     let monitor = MultiMonitor::new(|s| println!("{s}"));
     // The event manager handle the various events generated during the fuzzing loop
     // such as the notification of the addition of a new item to the corpus
@@ -92,64 +91,19 @@ fn main() {
     )
     .unwrap();
 
-
     // A minimization+queue policy to get testcasess from the corpus
     let scheduler = IndexesLenTimeMinimizerScheduler::new(QueueScheduler::new());
 
     // A fuzzer with feedbacks and a corpus scheduler
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
-
-    let mut hooks =
-    QemuHooks::new(emulator, tuple_list!(QemuEdgeCoverageHelper::default()));
-
-let executor = QemuExecutor::new(
-    &mut hooks,
-    &mut harness,
-    tuple_list!(edges_observer, time_observer),
-    &mut fuzzer,
-    &mut state,
-    &mut mgr,
-)?;
- // In case the corpus is empty (on first run), reset
- if state.corpus().count() < 1 {
-    if self.input_dirs.is_empty() {
-        // Generator of printable bytearrays of max size 32
-        let mut generator = RandBytesGenerator::new(32);
-
-        // Generate 8 initial inputs
-        state
-            .generate_initial_inputs(
-                &mut fuzzer,
-                &mut executor,
-                &mut generator,
-                &mut mgr,
-                8,
-            )
-            .expect("Failed to generate the initial corpus");
-        println!(
-            "We imported {} inputs from the generator.",
-            state.corpus().count()
-        );
-    } else {
-        println!("Loading from {:?}", &self.input_dirs);
-        // Load from disk
-        state
-            .load_initial_inputs(
-                &mut fuzzer,
-                &mut executor,
-                &mut mgr,
-                self.input_dirs,
-            )
-            .unwrap_or_else(|_| {
-                panic!("Failed to load initial corpus at {:?}", &self.input_dirs);
-            });
-        println!("We imported {} inputs from disk.", state.corpus().count());
-    }
-}
-
-let mut executor = TimeoutExecutor::new(executor, timeout);
-
+    let executor = InProcessExecutor::new(
+        &mut harness,
+        tuple_list!(edges_observer, time_observer),
+        &mut fuzzer,
+        &mut state,
+        &mut mgr,
+    );
 
     let mut executor = TimeoutExecutor::new(executor, timeout);
 
