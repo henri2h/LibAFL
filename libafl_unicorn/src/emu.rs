@@ -1,4 +1,4 @@
-use std::{cell::UnsafeCell, cmp::max, fs::File, io::Read, path::PathBuf};
+use std::{cell::UnsafeCell, cmp::max, error::Error, fs::File, io::Read, path::PathBuf};
 
 use hashbrown::{hash_map::Entry, HashMap};
 use libafl::{
@@ -18,14 +18,82 @@ use libafl::{
 };
 pub use libafl_targets::{edges_max_num, EDGES_MAP, EDGES_MAP_PTR, EDGES_MAP_SIZE, MAX_EDGES_NUM};
 use unicorn_engine::{
-    unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE},
-    RegisterARM64,
+    unicorn_const::{uc_error, Arch, HookType, MemType, Mode, Permission, SECOND_SCALE},
+    RegisterARM64, Unicorn,
 };
+
+static debug: bool = false;
 
 use crate::{
     helper::{hash_me, memory_dump},
     hooks::block_hook,
 };
+
+fn load_code(emu: &mut Unicorn<()>, address: u64) -> u64 {
+    let mut f = File::open("libafl_unicorn_test/a.out").expect("Could not open file");
+    let mut buffer = Vec::new();
+
+    // read the whole file
+    f.read_to_end(&mut buffer).expect("Could not read file");
+
+    let arm_code = buffer;
+
+    // Define memory regions
+    emu.mem_map(
+        address,
+        ((arm_code.len() / 1024) + 1) * 1024,
+        Permission::EXEC,
+    )
+    .expect("failed to map code page");
+
+    // Write memory
+    emu.mem_write(address, &arm_code)
+        .expect("failed to write instructions");
+    return arm_code.len() as u64;
+}
+
+fn debug_print(emu: &mut Unicorn<()>, err: uc_error) {
+    dbg!();
+    dbg!("Snap... something went wrong");
+    dbg!("Error: {:?}", err);
+
+    let pc = emu.pc_read().unwrap();
+    dbg!();
+    dbg!("Status when crash happened");
+
+    dbg!("PC: {:X}", pc);
+    dbg!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
+    dbg!("X0: {:X}", emu.reg_read(RegisterARM64::X0).unwrap());
+    dbg!("X1: {:X}", emu.reg_read(RegisterARM64::X1).unwrap());
+    dbg!("X2: {:X}", emu.reg_read(RegisterARM64::X2).unwrap());
+    dbg!("X3: {:X}", emu.reg_read(RegisterARM64::X3).unwrap());
+
+    dbg!();
+    for i in 0..10 {
+        let pos = i * 4 + pc - 4 * 5; // Instruction are on 4 bytes
+        let dec = pos as i64 - pc as i64;
+
+        let read_result = emu.mem_read_as_vec(pos, 4);
+        match read_result {
+            Ok(data) => {
+                dbg!(
+                    "{:X}: {:03}:\t {:02X} {:02X} {:02X} {:02X}  {:08b} {:08b} {:08b} {:08b}",
+                    pos,
+                    dec,
+                    data[0],
+                    data[1],
+                    data[2],
+                    data[3],
+                    data[0],
+                    data[1],
+                    data[2],
+                    data[3]
+                );
+            }
+            Err(_) => {}
+        }
+    }
+}
 
 fn callback(
     _unicorn: &mut unicorn_engine::Unicorn<()>,
@@ -34,20 +102,22 @@ fn callback(
     size: usize,
     value: i64,
 ) -> bool {
-    match mem {
-        MemType::WRITE => println!(
-            "Memory is being WRITTEN at adress: {:X} size: {} value: {}",
-            address, size, value
-        ),
-        MemType::READ => println!(
-            "Memory is being READ at adress: {:X} size: {}",
-            address, size
-        ),
+    if debug {
+        match mem {
+            MemType::WRITE => println!(
+                "Memory is being WRITTEN at adress: {:X} size: {} value: {}",
+                address, size, value
+            ),
+            MemType::READ => println!(
+                "Memory is being READ at adress: {:X} size: {}",
+                address, size
+            ),
 
-        _ => println!(
-            "Memory access type: {:?} adress: {:X} size: {} value: {}",
-            mem, address, size, value
-        ),
+            _ => println!(
+                "Memory access type: {:?} adress: {:X} size: {} value: {}",
+                mem, address, size, value
+            ),
+        }
     }
 
     return true;
@@ -58,36 +128,20 @@ fn emulate() {
     let r_sp: u64 = 0x8000;
     let data_size: usize = 0x100;
 
-    let mut f = File::open("libafl_unicorn_test/a.out").expect("Could not open file");
-    let mut buffer = Vec::new();
-
-    // read the whole file
-    f.read_to_end(&mut buffer).expect("Could not read file");
-
-    let arm_code = buffer;
-
-    // [0x17, 0x00, 0x40, 0xe2]; // sub r0, #23
-    println!("Program length: {}", arm_code.len());
-
     let mut emu = unicorn_engine::Unicorn::new(Arch::ARM64, Mode::LITTLE_ENDIAN)
         .expect("failed to initialize Unicorn instance");
 
     // Define memory regions
 
-    emu.mem_map(
-        address,
-        ((arm_code.len() / 1024) + 1) * 1024,
-        Permission::EXEC,
-    )
-    .expect("failed to map code page");
-
     // TODO: For some reason, the compiled program start by substracting 0x10 to SP
-    println!(
-        "Registering memory from {:#X} to {:#X} size: {:} ",
-        r_sp - (data_size as u64) * 8,
-        r_sp,
-        data_size * 8
-    );
+    if debug {
+        dbg!(
+            "Registering memory from {:#X} to {:#X} size: {:} ",
+            r_sp - (data_size as u64) * 8,
+            r_sp,
+            data_size * 8
+        );
+    }
     emu.mem_map(
         r_sp - (data_size as u64) * 8,
         data_size * 8,
@@ -96,8 +150,7 @@ fn emulate() {
     .expect("failed to map data page");
 
     // Write memory
-    emu.mem_write(address, &arm_code)
-        .expect("failed to write instructions");
+    let arm_code_len = load_code(&mut emu, address);
 
     // Set registry
     // TODO: For some reason, the compiled program start by substracting 0x10 to SP
@@ -109,7 +162,9 @@ fn emulate() {
     emu.mem_write(r_sp - (mem_data.len() as u64), &mem_data)
         .expect("failed to write instructions");
 
-    memory_dump(&mut emu, 2);
+    if debug {
+        memory_dump(&mut emu, 2);
+    }
 
     // Add me mory hook
     emu.add_mem_hook(HookType::MEM_ALL, r_sp - (data_size) as u64, r_sp, callback)
@@ -118,57 +173,35 @@ fn emulate() {
     emu.add_block_hook(block_hook)
         .expect("Failed to register code hook");
 
-    println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
+    if debug {
+        dbg!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
+    }
 
     let result = emu.emu_start(
         address + 0x40, // start at main. Position of main: 0x40
-        address + (arm_code.len()) as u64,
+        address + (arm_code_len) as u64,
         10 * SECOND_SCALE,
         0x1000,
     );
 
     match result {
         Ok(_) => {
-            println!("Ok");
+            dbg!("Ok");
 
             assert_eq!(emu.reg_read(RegisterARM64::X0), Ok(100));
             assert_eq!(emu.reg_read(RegisterARM64::X1), Ok(1337));
         }
         Err(err) => {
             if emu.pc_read().unwrap() == 0 {
-                println!("Reached start");
-                println!("Execution successfull ?");
+                if debug {
+                    dbg!("Reached start");
+                }
+
+                dbg!("Execution successfull ?");
 
                 memory_dump(&mut emu, 2);
             } else {
-                println!();
-                println!("Snap... something went wrong");
-                println!("Error: {:?}", err);
-
-                let pc = emu.pc_read().unwrap();
-                println!();
-                println!("Status when crash happened");
-
-                println!("PC: {:X}", pc);
-                println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
-                println!("X0: {:X}", emu.reg_read(RegisterARM64::X0).unwrap());
-                println!("X1: {:X}", emu.reg_read(RegisterARM64::X1).unwrap());
-                println!("X2: {:X}", emu.reg_read(RegisterARM64::X2).unwrap());
-                println!("X3: {:X}", emu.reg_read(RegisterARM64::X3).unwrap());
-
-                println!();
-                for i in 0..10 {
-                    let pos = i * 4 + pc - 4 * 5; // Instruction are on 4 bytes
-                    let dec = pos as i64 - pc as i64;
-
-                    let read_result = emu.mem_read_as_vec(pos, 4);
-                    match read_result {
-                        Ok(data) => {
-                            println!("{:X}: {:03}:\t {:02X} {:02X} {:02X} {:02X}  {:08b} {:08b} {:08b} {:08b}", pos, dec, data[0], data[1], data[2], data[3], data[0], data[1], data[2], data[3]);
-                        }
-                        Err(_) => {}
-                    }
-                }
+                debug_print(&mut emu, err);
             }
         }
     }
@@ -183,36 +216,12 @@ pub fn harness(input: &BytesInput) -> ExitKind {
     let r_sp: u64 = 0x8000;
     let data_size: usize = 0x100;
 
-    let mut f = File::open("libafl_unicorn_test/a.out").expect("Could not open file");
-    let mut buffer = Vec::new();
-
-    // read the whole file
-    f.read_to_end(&mut buffer).expect("Could not read file");
-
-    let arm_code = buffer;
-
     // [0x17, 0x00, 0x40, 0xe2]; // sub r0, #23
-    println!("Program length: {}", arm_code.len());
 
     let mut emu = unicorn_engine::Unicorn::new(Arch::ARM64, Mode::LITTLE_ENDIAN)
         .expect("failed to initialize Unicorn instance");
 
-    // Define memory regions
-
-    emu.mem_map(
-        address,
-        ((arm_code.len() / 1024) + 1) * 1024,
-        Permission::EXEC,
-    )
-    .expect("failed to map code page");
-
     // TODO: For some reason, the compiled program start by substracting 0x10 to SP
-    println!(
-        "Registering memory from {:#X} to {:#X} size: {:} ",
-        r_sp - (data_size as u64) * 8,
-        r_sp,
-        data_size * 8
-    );
     emu.mem_map(
         r_sp - (data_size as u64) * 8,
         data_size * 8,
@@ -220,9 +229,7 @@ pub fn harness(input: &BytesInput) -> ExitKind {
     )
     .expect("failed to map data page");
 
-    // Write memory
-    emu.mem_write(address, &arm_code)
-        .expect("failed to write instructions");
+    let arm_code_len = load_code(&mut emu, address);
 
     // Set registry
     // TODO: For some reason, the compiled program start by substracting 0x10 to SP
@@ -234,7 +241,9 @@ pub fn harness(input: &BytesInput) -> ExitKind {
     emu.mem_write(r_sp - (mem_data.len() as u64), &mem_data)
         .expect("failed to write instructions");
 
-    memory_dump(&mut emu, 2);
+    if debug {
+        memory_dump(&mut emu, 2);
+    }
 
     // Add me mory hook
     emu.add_mem_hook(HookType::MEM_ALL, r_sp - (data_size) as u64, r_sp, callback)
@@ -243,57 +252,34 @@ pub fn harness(input: &BytesInput) -> ExitKind {
     emu.add_block_hook(block_hook)
         .expect("Failed to register code hook");
 
-    println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
+    if debug {
+        dbg!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
+    }
 
     let result = emu.emu_start(
         address + 0x40, // start at main. Position of main: 0x40
-        address + (arm_code.len()) as u64,
+        address + arm_code_len,
         10 * SECOND_SCALE,
         0x1000,
     );
 
     match result {
         Ok(_) => {
-            println!("Ok");
+            dbg!("Ok");
 
             assert_eq!(emu.reg_read(RegisterARM64::X0), Ok(100));
             assert_eq!(emu.reg_read(RegisterARM64::X1), Ok(1337));
         }
         Err(err) => {
             if emu.pc_read().unwrap() == 0 {
-                println!("Reached start");
-                println!("Execution successfull ?");
+                if debug {
+                    dbg!("Reached start");
+                }
+                dbg!("Execution successfull ?");
 
                 memory_dump(&mut emu, 2);
             } else {
-                println!();
-                println!("Snap... something went wrong");
-                println!("Error: {:?}", err);
-
-                let pc = emu.pc_read().unwrap();
-                println!();
-                println!("Status when crash happened");
-
-                println!("PC: {:X}", pc);
-                println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
-                println!("X0: {:X}", emu.reg_read(RegisterARM64::X0).unwrap());
-                println!("X1: {:X}", emu.reg_read(RegisterARM64::X1).unwrap());
-                println!("X2: {:X}", emu.reg_read(RegisterARM64::X2).unwrap());
-                println!("X3: {:X}", emu.reg_read(RegisterARM64::X3).unwrap());
-
-                println!();
-                for i in 0..10 {
-                    let pos = i * 4 + pc - 4 * 5; // Instruction are on 4 bytes
-                    let dec = pos as i64 - pc as i64;
-
-                    let read_result = emu.mem_read_as_vec(pos, 4);
-                    match read_result {
-                        Ok(data) => {
-                            println!("{:X}: {:03}:\t {:02X} {:02X} {:02X} {:02X}  {:08b} {:08b} {:08b} {:08b}", pos, dec, data[0], data[1], data[2], data[3], data[0], data[1], data[2], data[3]);
-                        }
-                        Err(_) => {}
-                    }
-                }
+                debug_print(&mut emu, err);
             }
         }
     }
