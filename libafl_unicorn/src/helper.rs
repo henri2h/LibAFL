@@ -1,5 +1,7 @@
-use unicorn_engine::unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE};
-use unicorn_engine::RegisterARM64;
+use unicorn_engine::{
+    unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE},
+    RegisterARM64,
+};
 
 #[must_use]
 pub fn hash_me(mut x: u64) -> u64 {

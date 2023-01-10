@@ -1,14 +1,14 @@
-use unicorn_engine::unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE};
-use unicorn_engine::RegisterARM64;
-
 use std::{cell::UnsafeCell, cmp::max};
 
 use hashbrown::{hash_map::Entry, HashMap};
 use libafl::{inputs::UsesInput, state::HasMetadata};
+pub use libafl_targets::{edges_max_num, EDGES_MAP, EDGES_MAP_PTR, EDGES_MAP_SIZE, MAX_EDGES_NUM};
+use unicorn_engine::{
+    unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE},
+    RegisterARM64,
+};
 
 use crate::helper::hash_me;
-
-pub use libafl_targets::{edges_max_num, EDGES_MAP, EDGES_MAP_PTR, EDGES_MAP_SIZE, MAX_EDGES_NUM};
 
 static mut PREV_LOC: u64 = 0;
 

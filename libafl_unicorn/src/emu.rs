@@ -1,19 +1,6 @@
-use std::fs::File;
-use std::io::Read;
-
-use unicorn_engine::unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE};
-use unicorn_engine::RegisterARM64;
-
-use std::{cell::UnsafeCell, cmp::max};
+use std::{cell::UnsafeCell, cmp::max, fs::File, io::Read, path::PathBuf};
 
 use hashbrown::{hash_map::Entry, HashMap};
-use libafl::{inputs::UsesInput, state::HasMetadata};
-
-pub use libafl_targets::{edges_max_num, EDGES_MAP, EDGES_MAP_PTR, EDGES_MAP_SIZE, MAX_EDGES_NUM};
-
-use crate::helper::{hash_me, memory_dump};
-use crate::hooks::block_hook;
-
 use libafl::{
     bolts::{current_nanos, rands::StdRand, tuples::tuple_list, AsSlice},
     corpus::{InMemoryCorpus, OnDiskCorpus},
@@ -22,14 +9,23 @@ use libafl::{
     feedbacks::{CrashFeedback, MaxMapFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
     generators::RandPrintablesGenerator,
-    inputs::{BytesInput, HasTargetBytes},
+    inputs::{BytesInput, HasTargetBytes, UsesInput},
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
     observers::StdMapObserver,
     schedulers::QueueScheduler,
     stages::mutational::StdMutationalStage,
-    state::StdState,
+    state::{HasMetadata, StdState},
 };
-use std::path::PathBuf;
+pub use libafl_targets::{edges_max_num, EDGES_MAP, EDGES_MAP_PTR, EDGES_MAP_SIZE, MAX_EDGES_NUM};
+use unicorn_engine::{
+    unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE},
+    RegisterARM64,
+};
+
+use crate::{
+    helper::{hash_me, memory_dump},
+    hooks::block_hook,
+};
 
 fn callback(
     _unicorn: &mut unicorn_engine::Unicorn<()>,

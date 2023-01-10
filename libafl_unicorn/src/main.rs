@@ -2,62 +2,63 @@ pub mod emu;
 pub mod helper;
 pub mod hooks;
 
-use std::fs::File;
-use std::io::Read;
-
-use unicorn_engine::unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE};
-use unicorn_engine::RegisterARM64;
-
-use std::{cell::UnsafeCell, cmp::max};
-
-use hashbrown::{hash_map::Entry, HashMap};
-use libafl::{inputs::UsesInput, state::HasMetadata};
-
-pub use libafl_targets::{edges_max_num, EDGES_MAP, EDGES_MAP_PTR, EDGES_MAP_SIZE, MAX_EDGES_NUM};
-
-use crate::emu::harness;
-use crate::helper::{hash_me, memory_dump};
-use crate::hooks::block_hook;
-
-use std::path::PathBuf;
 #[cfg(windows)]
 use std::ptr::write_volatile;
+use std::{
+    cell::UnsafeCell, cmp::max, fs::File, io::Read, path::PathBuf, ptr::addr_of_mut, time::Duration,
+};
 
+use hashbrown::{hash_map::Entry, HashMap};
 #[cfg(feature = "tui")]
 use libafl::monitors::tui::TuiMonitor;
 #[cfg(not(feature = "tui"))]
 use libafl::monitors::SimpleMonitor;
 use libafl::{
     bolts::{current_nanos, rands::StdRand, tuples::tuple_list, AsSlice},
-    corpus::{CachedOnDiskCorpus, Corpus, OnDiskCorpus},
     corpus::{InMemoryCorpus, OnDiskCorpus},
     events::SimpleEventManager,
     executors::{inprocess::InProcessExecutor, ExitKind, TimeoutExecutor},
     feedback_or, feedback_or_fast,
-    feedbacks::{CrashFeedback, MaxMapFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
+    feedbacks::{CrashFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
     generators::{RandBytesGenerator, RandPrintablesGenerator},
-    inputs::{BytesInput, HasTargetBytes},
+    inputs::{BytesInput, HasTargetBytes, UsesInput},
     monitors::MultiMonitor,
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
     observers::{HitcountsMapObserver, TimeObserver, VariableMapObserver},
     schedulers::{IndexesLenTimeMinimizerScheduler, QueueScheduler},
     stages::mutational::StdMutationalStage,
-    state::StdState,
+    state::{HasMetadata, StdState},
+};
+pub use libafl_targets::{edges_map_mut_slice, MAX_EDGES_NUM};
+use unicorn_engine::{
+    unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE},
+    RegisterARM64,
+};
+
+use crate::{
+    emu::harness,
+    helper::{hash_me, memory_dump},
+    hooks::block_hook,
 };
 
 // emulating
 
 fn main() {
+    let timeout = Duration::from_secs(1);
+
     let monitor = MultiMonitor::new(|s| println!("{s}"));
     // The event manager handle the various events generated during the fuzzing loop
     // such as the notification of the addition of a new item to the corpus
     let mut mgr = SimpleEventManager::new(monitor);
 
-    let edges = unsafe { &mut hooks::EDGES_MAP };
-    let edges_counter = unsafe { &mut hooks::MAX_EDGES_NUM };
-    let edges_observer =
-        HitcountsMapObserver::new(VariableMapObserver::new("edges", edges, edges_counter));
+    let edges_observer = unsafe {
+        HitcountsMapObserver::new(VariableMapObserver::from_mut_slice(
+            "edges",
+            edges_map_mut_slice(),
+            addr_of_mut!(MAX_EDGES_NUM),
+        ))
+    };
 
     // Create an observation channel to keep track of the execution time
     let time_observer = TimeObserver::new("time");
@@ -97,13 +98,15 @@ fn main() {
     // A fuzzer with feedbacks and a corpus scheduler
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
+    let mut binding = harness; // being harness a function we need a local var to bind it
     let executor = InProcessExecutor::new(
-        &mut harness,
+        &mut binding,
         tuple_list!(edges_observer, time_observer),
         &mut fuzzer,
         &mut state,
         &mut mgr,
-    );
+    )
+    .expect("Failed to create the executor");
 
     let mut executor = TimeoutExecutor::new(executor, timeout);
 
