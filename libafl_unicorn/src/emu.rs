@@ -130,16 +130,16 @@ pub fn emulate() {
 
 // The closure that we want to fuzz
 pub fn harness(input: &BytesInput) -> ExitKind {
-    unsafe {
-        // reset coverage
-        for i in 0..EDGES_MAP.len() {
-            EDGES_MAP[i] = 0;
-        }
-    }
-
+    // convert input bytes
     let target = input.target_bytes();
     let buf = target.as_slice();
+    if debug {
+        dbg!(buf);
+    }
+
+    println!("Run prog");
     let result = prog(buf);
+
     if debug {
         unsafe {
             for val in 0..EDGES_MAP.len() {
@@ -217,23 +217,25 @@ fn prog(buf: &[u8]) -> ExitKind {
                 if debug {
                     println!("Reached start");
                 }
-                println!("Execution successfull ?");
 
-                memory_dump(&mut emu, 2);
+                // check output
                 let mut buf: [u8; 1] = [0];
-
                 let pc = emu.reg_read(RegisterARM64::SP).unwrap();
 
                 emu.mem_read(pc - 1, &mut buf)
                     .expect("Could not read memory");
-
 
                 // check result
                 if buf[0] != 0x4 {
                     // error here
                     return ExitKind::Ok;
                 }
+
                 // success
+                println!("Correct input found");
+                memory_dump(&mut emu, 2);
+
+                panic!("Success :)");
                 return ExitKind::Ok;
             } else {
                 debug_print(&mut emu, err);

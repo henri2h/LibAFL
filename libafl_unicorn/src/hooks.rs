@@ -13,12 +13,14 @@ use crate::helper::hash_me;
 static mut PREV_LOC: u64 = 0;
 
 pub fn block_hook(emu: &mut unicorn_engine::Unicorn<()>, address: u64, small: u32) {
-    println!("Block hook: address: {:X} {}", address, small);
+    //println!("Block hook: address: {:X} {}", address, small);
 
     unsafe {
         let hash = address ^ PREV_LOC;
         // println!("Hash {}", hash);
         EDGES_MAP[hash as usize] += 1;
         PREV_LOC = address >> 1;
+
+        MAX_EDGES_NUM = edges_max_num();
     }
 }
