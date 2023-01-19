@@ -2,6 +2,8 @@ pub mod emu;
 pub mod helper;
 pub mod hooks;
 
+use std::env;
+
 #[cfg(windows)]
 use std::ptr::write_volatile;
 use std::{
@@ -43,8 +45,7 @@ use crate::{
 };
 
 // emulating
-
-fn main() {
+fn runFuzzer() {
     let timeout = Duration::from_secs(1);
 
     let monitor = MultiMonitor::new(|s| println!("{s}"));
@@ -125,4 +126,15 @@ fn main() {
     fuzzer
         .fuzz_loop(&mut stages, &mut executor, &mut state, &mut mgr)
         .expect("Error in the fuzzing loop");
+}
+
+fn main() {
+    let args: Vec<_> = env::args().collect();
+    if args.len() > 1 {
+        if args[1] == "emu" {
+            emu::emulate();
+            return;
+        }
+    }
+    runFuzzer();
 }
