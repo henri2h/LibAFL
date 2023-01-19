@@ -23,6 +23,7 @@ use unicorn_engine::{
 };
 
 static debug: bool = false;
+static showInputs: bool = true;
 
 use crate::{
     helper::{hash_me, memory_dump},
@@ -133,7 +134,7 @@ pub fn harness(input: &BytesInput) -> ExitKind {
     // convert input bytes
     let target = input.target_bytes();
     let buf = target.as_slice();
-    if debug {
+    if showInputs {
         dbg!(buf);
     }
 
@@ -233,7 +234,9 @@ fn prog(buf: &[u8]) -> ExitKind {
 
                 // success
                 println!("Correct input found");
+                dbg!(buf);
                 memory_dump(&mut emu, 2);
+
 
                 panic!("Success :)");
                 return ExitKind::Ok;

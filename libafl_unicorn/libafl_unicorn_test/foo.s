@@ -11,6 +11,7 @@ main:
 	.cfi_startproc
 	sub	sp, sp, #16
 	.cfi_def_cfa_offset 16
+	strb	wzr, [sp, 15]
 	ldrb	w1, [sp, 13]
 	ldrb	w0, [sp, 14]
 	and	w0, w0, 255
