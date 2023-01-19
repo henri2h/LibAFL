@@ -124,7 +124,7 @@ fn callback(
 }
 
 pub fn emulate() {
-    let mem_data = [0x50, 0x20, 0x0];
+    let mem_data = [0x50, 0x24, 0x0];
     prog(&mem_data);
 }
 
@@ -202,6 +202,14 @@ fn prog(buf: &[u8]) -> ExitKind {
                 dbg!("Execution successfull ?");
 
                 memory_dump(&mut emu, 2);
+                let mut buf: [u8; 1] = [0];
+
+                let pc = emu.reg_read(RegisterARM64::SP).unwrap();
+
+                emu.mem_read(pc - 1, &mut buf)
+                    .expect("Could not read memory");
+
+                assert_eq!(buf[0], 0x4);
             } else {
                 debug_print(&mut emu, err);
             }
