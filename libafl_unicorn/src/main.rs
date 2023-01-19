@@ -112,7 +112,7 @@ fn runFuzzer() {
     let mut executor = TimeoutExecutor::new(executor, timeout);
 
     // Generator of printable bytearrays of max size 32
-    let mut generator = RandPrintablesGenerator::new(32);
+    let mut generator = RandBytesGenerator::new(4);
 
     // Generate 8 initial inputs
     state
