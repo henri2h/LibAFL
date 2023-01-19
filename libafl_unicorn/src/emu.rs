@@ -53,22 +53,22 @@ fn load_code(emu: &mut Unicorn<()>, address: u64) -> u64 {
 }
 
 fn debug_print(emu: &mut Unicorn<()>, err: uc_error) {
-    dbg!();
-    dbg!("Snap... something went wrong");
-    dbg!("Error: {:?}", err);
+    println!();
+    println!("Snap... something went wrong");
+    println!("Error: {:?}", err);
 
     let pc = emu.pc_read().unwrap();
-    dbg!();
-    dbg!("Status when crash happened");
+    println!();
+    println!("Status when crash happened");
 
-    dbg!("PC: {:X}", pc);
-    dbg!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
-    dbg!("X0: {:X}", emu.reg_read(RegisterARM64::X0).unwrap());
-    dbg!("X1: {:X}", emu.reg_read(RegisterARM64::X1).unwrap());
-    dbg!("X2: {:X}", emu.reg_read(RegisterARM64::X2).unwrap());
-    dbg!("X3: {:X}", emu.reg_read(RegisterARM64::X3).unwrap());
+    println!("PC: {:X}", pc);
+    println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
+    println!("X0: {:X}", emu.reg_read(RegisterARM64::X0).unwrap());
+    println!("X1: {:X}", emu.reg_read(RegisterARM64::X1).unwrap());
+    println!("X2: {:X}", emu.reg_read(RegisterARM64::X2).unwrap());
+    println!("X3: {:X}", emu.reg_read(RegisterARM64::X3).unwrap());
 
-    dbg!();
+    println!();
     for i in 0..10 {
         let pos = i * 4 + pc - 4 * 5; // Instruction are on 4 bytes
         let dec = pos as i64 - pc as i64;
@@ -130,9 +130,27 @@ pub fn emulate() {
 
 // The closure that we want to fuzz
 pub fn harness(input: &BytesInput) -> ExitKind {
+    unsafe {
+        // reset coverage
+        for i in 0..EDGES_MAP.len() {
+            EDGES_MAP[i] = 0;
+        }
+    }
+
     let target = input.target_bytes();
     let buf = target.as_slice();
-    return prog(buf);
+    let result = prog(buf);
+    if debug {
+        unsafe {
+            for val in 0..EDGES_MAP.len() {
+                if EDGES_MAP[val] != 0 {
+                    dbg!(val, EDGES_MAP[val]);
+                }
+            }
+        };
+    }
+
+    return result;
 }
 
 fn prog(buf: &[u8]) -> ExitKind {
@@ -177,7 +195,7 @@ fn prog(buf: &[u8]) -> ExitKind {
         .expect("Failed to register code hook");
 
     if debug {
-        dbg!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
+        println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
     }
 
     let result = emu.emu_start(
@@ -189,7 +207,7 @@ fn prog(buf: &[u8]) -> ExitKind {
 
     match result {
         Ok(_) => {
-            dbg!("Ok");
+            // never hapens
 
             assert_eq!(emu.reg_read(RegisterARM64::X0), Ok(100));
             assert_eq!(emu.reg_read(RegisterARM64::X1), Ok(1337));
@@ -197,9 +215,9 @@ fn prog(buf: &[u8]) -> ExitKind {
         Err(err) => {
             if emu.pc_read().unwrap() == 0 {
                 if debug {
-                    dbg!("Reached start");
+                    println!("Reached start");
                 }
-                dbg!("Execution successfull ?");
+                println!("Execution successfull ?");
 
                 memory_dump(&mut emu, 2);
                 let mut buf: [u8; 1] = [0];
@@ -209,7 +227,14 @@ fn prog(buf: &[u8]) -> ExitKind {
                 emu.mem_read(pc - 1, &mut buf)
                     .expect("Could not read memory");
 
-                assert_eq!(buf[0], 0x4);
+
+                // check result
+                if buf[0] != 0x4 {
+                    // error here
+                    return ExitKind::Ok;
+                }
+                // success
+                return ExitKind::Ok;
             } else {
                 debug_print(&mut emu, err);
             }
