@@ -123,95 +123,19 @@ fn callback(
     return true;
 }
 
-fn emulate() {
-    let address: u64 = 0x1000;
-    let r_sp: u64 = 0x8000;
-    let data_size: usize = 0x100;
-
-    let mut emu = unicorn_engine::Unicorn::new(Arch::ARM64, Mode::LITTLE_ENDIAN)
-        .expect("failed to initialize Unicorn instance");
-
-    // Define memory regions
-
-    // TODO: For some reason, the compiled program start by substracting 0x10 to SP
-    if debug {
-        dbg!(
-            "Registering memory from {:#X} to {:#X} size: {:} ",
-            r_sp - (data_size as u64) * 8,
-            r_sp,
-            data_size * 8
-        );
-    }
-    emu.mem_map(
-        r_sp - (data_size as u64) * 8,
-        data_size * 8,
-        Permission::ALL,
-    )
-    .expect("failed to map data page");
-
-    // Write memory
-    let arm_code_len = load_code(&mut emu, address);
-
-    // Set registry
-    // TODO: For some reason, the compiled program start by substracting 0x10 to SP
-    emu.reg_write(RegisterARM64::SP, r_sp)
-        .expect("Could not set registery");
-
-    // TODO specific values
+pub fn emulate() {
     let mem_data = [0x50, 0x20, 0x0];
-    emu.mem_write(r_sp - (mem_data.len() as u64), &mem_data)
-        .expect("failed to write instructions");
-
-    if debug {
-        memory_dump(&mut emu, 2);
-    }
-
-    // Add me mory hook
-    emu.add_mem_hook(HookType::MEM_ALL, r_sp - (data_size) as u64, r_sp, callback)
-        .expect("Failed to register watcher");
-
-    emu.add_block_hook(block_hook)
-        .expect("Failed to register code hook");
-
-    if debug {
-        dbg!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
-    }
-
-    let result = emu.emu_start(
-        address + 0x40, // start at main. Position of main: 0x40
-        address + (arm_code_len) as u64,
-        10 * SECOND_SCALE,
-        0x1000,
-    );
-
-    match result {
-        Ok(_) => {
-            dbg!("Ok");
-
-            assert_eq!(emu.reg_read(RegisterARM64::X0), Ok(100));
-            assert_eq!(emu.reg_read(RegisterARM64::X1), Ok(1337));
-        }
-        Err(err) => {
-            if emu.pc_read().unwrap() == 0 {
-                if debug {
-                    dbg!("Reached start");
-                }
-
-                dbg!("Execution successfull ?");
-
-                memory_dump(&mut emu, 2);
-            } else {
-                debug_print(&mut emu, err);
-            }
-        }
-    }
+    prog(&mem_data);
 }
 
 // The closure that we want to fuzz
 pub fn harness(input: &BytesInput) -> ExitKind {
     let target = input.target_bytes();
     let buf = target.as_slice();
+    return prog(buf);
+}
 
+fn prog(buf: &[u8]) -> ExitKind {
     let address: u64 = 0x1000;
     let r_sp: u64 = 0x8000;
     let data_size: usize = 0x100;
