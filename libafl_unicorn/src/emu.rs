@@ -154,6 +154,8 @@ pub fn harness(input: &BytesInput) -> ExitKind {
     return result;
 }
 
+static mut EMU: Option<unicorn_engine::Unicorn<'static, ()>> = None;
+
 fn prog(buf: &[u8]) -> ExitKind {
     let address: u64 = 0x1000;
     let r_sp: u64 = 0x8000;
@@ -161,18 +163,32 @@ fn prog(buf: &[u8]) -> ExitKind {
 
     // [0x17, 0x00, 0x40, 0xe2]; // sub r0, #23
 
-    let mut emu = unicorn_engine::Unicorn::new(Arch::ARM64, Mode::LITTLE_ENDIAN)
-        .expect("failed to initialize Unicorn instance");
+    let mapped_addr = r_sp - (data_size as u64) * 8;
+    let mapped_len = data_size * 8;
 
-    // TODO: For some reason, the compiled program start by substracting 0x10 to SP
-    emu.mem_map(
-        r_sp - (data_size as u64) * 8,
-        data_size * 8,
-        Permission::ALL,
-    )
-    .expect("failed to map data page");
+    let mut arm_code_len = 0;
 
-    let arm_code_len = load_code(&mut emu, address);
+    let mut emu = unsafe {
+        EMU.get_or_insert_with(|| {
+            let mut emu = unicorn_engine::Unicorn::new(Arch::ARM64, Mode::LITTLE_ENDIAN)
+                .expect("failed to initialize Unicorn instance");
+
+            arm_code_len = load_code(&mut emu, address);
+
+            // TODO: For some reason, the compiled program start by substracting 0x10 to SP
+            emu.mem_map(mapped_addr, mapped_len, Permission::ALL)
+                .expect("failed to map data page");
+
+            // Add me mory hook
+            emu.add_mem_hook(HookType::MEM_ALL, r_sp - (data_size) as u64, r_sp, callback)
+                .expect("Failed to register watcher");
+
+            emu.add_block_hook(block_hook)
+                .expect("Failed to register code hook");
+
+            emu
+        })
+    };
 
     // Set registry
     // TODO: For some reason, the compiled program start by substracting 0x10 to SP
@@ -187,13 +203,6 @@ fn prog(buf: &[u8]) -> ExitKind {
     if debug {
         memory_dump(&mut emu, 2);
     }
-
-    // Add me mory hook
-    emu.add_mem_hook(HookType::MEM_ALL, r_sp - (data_size) as u64, r_sp, callback)
-        .expect("Failed to register watcher");
-
-    emu.add_block_hook(block_hook)
-        .expect("Failed to register code hook");
 
     if debug {
         println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
@@ -236,7 +245,6 @@ fn prog(buf: &[u8]) -> ExitKind {
                 println!("Correct input found");
                 dbg!(buf);
                 memory_dump(&mut emu, 2);
-
 
                 panic!("Success :)");
                 return ExitKind::Ok;

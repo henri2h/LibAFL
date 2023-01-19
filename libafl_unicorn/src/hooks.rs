@@ -16,11 +16,9 @@ pub fn block_hook(emu: &mut unicorn_engine::Unicorn<()>, address: u64, small: u3
     //println!("Block hook: address: {:X} {}", address, small);
 
     unsafe {
-        let hash = address ^ PREV_LOC;
+        let hash = (address ^ PREV_LOC) & (EDGES_MAP_SIZE as u64 - 1);
         // println!("Hash {}", hash);
         EDGES_MAP[hash as usize] += 1;
         PREV_LOC = address >> 1;
-
-        MAX_EDGES_NUM = edges_max_num();
     }
 }

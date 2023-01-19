@@ -2,12 +2,11 @@ pub mod emu;
 pub mod helper;
 pub mod hooks;
 
-use std::env;
-
 #[cfg(windows)]
 use std::ptr::write_volatile;
 use std::{
-    cell::UnsafeCell, cmp::max, fs::File, io::Read, path::PathBuf, ptr::addr_of_mut, time::Duration,
+    cell::UnsafeCell, cmp::max, env, fs::File, io::Read, path::PathBuf, ptr::addr_of_mut,
+    time::Duration,
 };
 
 use hashbrown::{hash_map::Entry, HashMap};
@@ -27,12 +26,12 @@ use libafl::{
     inputs::{BytesInput, HasTargetBytes, UsesInput},
     monitors::MultiMonitor,
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
-    observers::{HitcountsMapObserver, TimeObserver, VariableMapObserver},
+    observers::{ConstMapObserver, HitcountsMapObserver, TimeObserver},
     schedulers::{IndexesLenTimeMinimizerScheduler, QueueScheduler},
     stages::mutational::StdMutationalStage,
     state::{HasMetadata, StdState},
 };
-pub use libafl_targets::{edges_map_mut_slice, MAX_EDGES_NUM};
+pub use libafl_targets::{EDGES_MAP_PTR, EDGES_MAP_SIZE};
 use unicorn_engine::{
     unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE},
     RegisterARM64,
@@ -54,10 +53,9 @@ fn runFuzzer() {
     let mut mgr = SimpleEventManager::new(monitor);
 
     let edges_observer = unsafe {
-        HitcountsMapObserver::new(VariableMapObserver::from_mut_slice(
+        HitcountsMapObserver::new(ConstMapObserver::<_, EDGES_MAP_SIZE>::from_mut_ptr(
             "edges",
-            edges_map_mut_slice(),
-            addr_of_mut!(MAX_EDGES_NUM),
+            EDGES_MAP_PTR,
         ))
     };
 
