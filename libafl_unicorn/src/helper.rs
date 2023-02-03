@@ -1,15 +1,4 @@
-use unicorn_engine::{
-    unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE},
-    RegisterARM64,
-};
-
-#[must_use]
-pub fn hash_me(mut x: u64) -> u64 {
-    x = (x.overflowing_shr(16).0 ^ x).overflowing_mul(0x45d9f3b).0;
-    x = (x.overflowing_shr(16).0 ^ x).overflowing_mul(0x45d9f3b).0;
-    x = (x.overflowing_shr(16).0 ^ x) ^ x;
-    x
-}
+use unicorn_engine::RegisterARM64;
 
 pub fn memory_dump(emu: &mut unicorn_engine::Unicorn<()>, len: u64) {
     let pc = emu.reg_read(RegisterARM64::SP).unwrap();

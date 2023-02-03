@@ -11,7 +11,7 @@ int main() {
   for(int i = 0; i< len; i++){
     f[i] = i;
   }*/
-  
+  c = 0x0;
   if (a > b) {
     c = 0x1;
     if (a > 0x20) {

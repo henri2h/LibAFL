@@ -1,34 +1,67 @@
-use std::{cell::UnsafeCell, cmp::max, error::Error, fs::File, io::Read, path::PathBuf};
+use std::{fs::File, io::Read};
 
-use hashbrown::{hash_map::Entry, HashMap};
-use libafl::{
-    bolts::{current_nanos, rands::StdRand, tuples::tuple_list, AsSlice},
-    corpus::{InMemoryCorpus, OnDiskCorpus},
-    events::SimpleEventManager,
-    executors::{inprocess::InProcessExecutor, ExitKind},
-    feedbacks::{CrashFeedback, MaxMapFeedback},
-    fuzzer::{Fuzzer, StdFuzzer},
-    generators::RandPrintablesGenerator,
-    inputs::{BytesInput, HasTargetBytes, UsesInput},
-    mutators::scheduled::{havoc_mutations, StdScheduledMutator},
-    observers::StdMapObserver,
-    schedulers::QueueScheduler,
-    stages::mutational::StdMutationalStage,
-    state::{HasMetadata, StdState},
-};
 pub use libafl_targets::{edges_max_num, EDGES_MAP, EDGES_MAP_PTR, EDGES_MAP_SIZE, MAX_EDGES_NUM};
 use unicorn_engine::{
     unicorn_const::{uc_error, Arch, HookType, MemType, Mode, Permission, SECOND_SCALE},
     RegisterARM64, Unicorn,
 };
 
-static debug: bool = false;
-static showInputs: bool = true;
+static DEBUG: bool = false;
 
-use crate::{
-    helper::{hash_me, memory_dump},
-    hooks::block_hook,
-};
+static CODE_ADDRESS: u64 = 0x800;
+
+use crate::{helper::memory_dump, hooks::block_hook};
+
+pub struct Emulator {
+    emu: unicorn_engine::Unicorn<'static, ()>,
+    code_len: u64,
+}
+
+impl Emulator {
+    pub fn new() -> Emulator {
+        let emu = unicorn_engine::Unicorn::new(Arch::ARM64, Mode::LITTLE_ENDIAN)
+            .expect("failed to initialize Unicorn instance");
+        Emulator { emu, code_len: 0 }
+    }
+
+    pub fn setup(&mut self, input_addr: u64, input_size: usize) {
+        self.code_len = load_code(&mut self.emu, CODE_ADDRESS);
+        // TODO: For some reason, the compiled program start by substracting 0x10 to SP
+        self.emu
+            .mem_map(input_addr, input_size, Permission::ALL)
+            .expect("failed to map data page");
+    }
+
+    pub fn run(&mut self) {
+        prog(&mut self.emu, self.code_len);
+    }
+
+    pub fn write_mem(&mut self, addr: u64, buf: &[u8]) {
+        //println!("{} -> {}", addr, addr + (buf.len() as u64));
+        self.emu
+            .mem_write(addr, &buf)
+            .expect("failed to write instructions");
+    }
+
+    pub fn set_memory_hook(&mut self, addr: u64, length: u64) {
+        self.emu
+            .add_mem_hook(HookType::MEM_ALL, addr - length, addr, callback)
+            .expect("Failed to register watcher");
+    }
+
+    pub fn set_code_hook(&mut self) {
+        self.emu
+            .add_block_hook(block_hook)
+            .expect("Failed to register code hook");
+    }
+
+    pub fn write_reg<T>(&mut self, regid: T, value: u64)
+    where
+        T: Into<i32>,
+    {
+        self.emu.reg_write(regid, value).expect("Could not set registry");
+    }
+}
 
 fn load_code(emu: &mut Unicorn<()>, address: u64) -> u64 {
     let mut f = File::open("libafl_unicorn_test/a.out").expect("Could not open file");
@@ -77,7 +110,7 @@ fn debug_print(emu: &mut Unicorn<()>, err: uc_error) {
         let read_result = emu.mem_read_as_vec(pos, 4);
         match read_result {
             Ok(data) => {
-                dbg!(
+                println!(
                     "{:X}: {:03}:\t {:02X} {:02X} {:02X} {:02X}  {:08b} {:08b} {:08b} {:08b}",
                     pos,
                     dec,
@@ -103,7 +136,7 @@ fn callback(
     size: usize,
     value: i64,
 ) -> bool {
-    if debug {
+    if DEBUG {
         match mem {
             MemType::WRITE => println!(
                 "Memory is being WRITTEN at adress: {:X} size: {} value: {}",
@@ -126,91 +159,17 @@ fn callback(
 
 pub fn emulate() {
     let mem_data = [0x50, 0x24, 0x0];
-    prog(&mem_data);
+    // TODO
 }
 
-// The closure that we want to fuzz
-pub fn harness(input: &BytesInput) -> ExitKind {
-    // convert input bytes
-    let target = input.target_bytes();
-    let buf = target.as_slice();
-    if showInputs {
-        dbg!(buf);
-    }
-
-    println!("Run prog");
-    let result = prog(buf);
-
-    if debug {
-        unsafe {
-            for val in 0..EDGES_MAP.len() {
-                if EDGES_MAP[val] != 0 {
-                    dbg!(val, EDGES_MAP[val]);
-                }
-            }
-        };
-    }
-
-    return result;
-}
-
-static mut EMU: Option<unicorn_engine::Unicorn<'static, ()>> = None;
-
-fn prog(buf: &[u8]) -> ExitKind {
-    let address: u64 = 0x1000;
-    let r_sp: u64 = 0x8000;
-    let data_size: usize = 0x100;
-
-    // [0x17, 0x00, 0x40, 0xe2]; // sub r0, #23
-
-    let mapped_addr = r_sp - (data_size as u64) * 8;
-    let mapped_len = data_size * 8;
-
-    let mut arm_code_len = 0;
-
-    let mut emu = unsafe {
-        EMU.get_or_insert_with(|| {
-            let mut emu = unicorn_engine::Unicorn::new(Arch::ARM64, Mode::LITTLE_ENDIAN)
-                .expect("failed to initialize Unicorn instance");
-
-            arm_code_len = load_code(&mut emu, address);
-
-            // TODO: For some reason, the compiled program start by substracting 0x10 to SP
-            emu.mem_map(mapped_addr, mapped_len, Permission::ALL)
-                .expect("failed to map data page");
-
-            // Add me mory hook
-            emu.add_mem_hook(HookType::MEM_ALL, r_sp - (data_size) as u64, r_sp, callback)
-                .expect("Failed to register watcher");
-
-            emu.add_block_hook(block_hook)
-                .expect("Failed to register code hook");
-
-            emu
-        })
-    };
-
-    // Set registry
-    // TODO: For some reason, the compiled program start by substracting 0x10 to SP
-    emu.reg_write(RegisterARM64::SP, r_sp)
-        .expect("Could not set registery");
-
-    // TODO specific values
-    let mem_data = buf;
-    emu.mem_write(r_sp - (mem_data.len() as u64), &mem_data)
-        .expect("failed to write instructions");
-
-    if debug {
-        memory_dump(&mut emu, 2);
-    }
-
-    if debug {
-        println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
+pub fn prog(emu: &mut unicorn_engine::Unicorn<'static, ()>, arm_code_len: u64) {
+    if DEBUG {
+        memory_dump(emu, 2);
     }
 
     let result = emu.emu_start(
-        address + 0x40, // start at main. Position of main: 0x40
-        address + arm_code_len,
+        CODE_ADDRESS + 0x40, // start at main. Position of main: 0x40
+        CODE_ADDRESS + arm_code_len,
         10 * SECOND_SCALE,
         0x1000,
     );
@@ -224,7 +183,7 @@ fn prog(buf: &[u8]) -> ExitKind {
         }
         Err(err) => {
             if emu.pc_read().unwrap() == 0 {
-                if debug {
+                if DEBUG {
                     println!("Reached start");
                 }
 
@@ -237,22 +196,19 @@ fn prog(buf: &[u8]) -> ExitKind {
 
                 // check result
                 if buf[0] != 0x4 {
-                    // error here
-                    return ExitKind::Ok;
+                    // didn't found the correct value
+                    return;
                 }
 
                 // success
                 println!("Correct input found");
-                dbg!(buf);
-                memory_dump(&mut emu, 2);
+                println!("Output: {:#}", buf[0]);
+                memory_dump(emu, 2);
 
                 panic!("Success :)");
-                return ExitKind::Ok;
             } else {
-                debug_print(&mut emu, err);
+                debug_print(emu, err);
             }
         }
     }
-
-    ExitKind::Ok
 }

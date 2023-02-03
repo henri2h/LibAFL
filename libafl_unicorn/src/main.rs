@@ -2,18 +2,9 @@ pub mod emu;
 pub mod helper;
 pub mod hooks;
 
-#[cfg(windows)]
-use std::ptr::write_volatile;
-use std::{
-    cell::UnsafeCell, cmp::max, env, fs::File, io::Read, path::PathBuf, ptr::addr_of_mut,
-    time::Duration,
-};
+use std::{char::MAX, env, path::PathBuf, time::Duration};
 
-use hashbrown::{hash_map::Entry, HashMap};
-#[cfg(feature = "tui")]
-use libafl::monitors::tui::TuiMonitor;
-#[cfg(not(feature = "tui"))]
-use libafl::monitors::SimpleMonitor;
+use emu::Emulator;
 use libafl::{
     bolts::{current_nanos, rands::StdRand, tuples::tuple_list, AsSlice},
     corpus::{InMemoryCorpus, OnDiskCorpus},
@@ -22,29 +13,28 @@ use libafl::{
     feedback_or, feedback_or_fast,
     feedbacks::{CrashFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
-    generators::{RandBytesGenerator, RandPrintablesGenerator},
-    inputs::{BytesInput, HasTargetBytes, UsesInput},
+    generators::RandBytesGenerator,
+    inputs::{BytesInput, HasTargetBytes},
     monitors::MultiMonitor,
     mutators::scheduled::{havoc_mutations, StdScheduledMutator},
     observers::{ConstMapObserver, HitcountsMapObserver, TimeObserver},
     schedulers::{IndexesLenTimeMinimizerScheduler, QueueScheduler},
     stages::mutational::StdMutationalStage,
-    state::{HasMetadata, StdState},
+    state::StdState,
 };
 pub use libafl_targets::{EDGES_MAP_PTR, EDGES_MAP_SIZE};
-use unicorn_engine::{
-    unicorn_const::{Arch, HookType, MemType, Mode, Permission, SECOND_SCALE},
-    RegisterARM64,
-};
+use unicorn_engine::RegisterARM64;
 
-use crate::{
-    emu::harness,
-    helper::{hash_me, memory_dump},
-    hooks::block_hook,
-};
+pub const MAX_INPUT_SIZE: usize = 0x1000; //1048576; // 1MB
 
 // emulating
-fn runFuzzer() {
+fn fuzzer() {
+    let input_addr_end: u64 = 0x8000;
+    let input_addr_start: u64 = input_addr_end - MAX_INPUT_SIZE as u64;
+    let emu = &mut Emulator::new();
+    emu.setup(input_addr_start, MAX_INPUT_SIZE);
+    emu.set_code_hook();
+
     let timeout = Duration::from_secs(1);
 
     let monitor = MultiMonitor::new(|s| println!("{s}"));
@@ -97,9 +87,24 @@ fn runFuzzer() {
     // A fuzzer with feedbacks and a corpus scheduler
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
-    let mut binding = harness; // being harness a function we need a local var to bind it
+    let mut harness = |input: &BytesInput| {
+        let target = input.target_bytes();
+        let mut buf = target.as_slice();
+        let len = buf.len();
+        if len > MAX_INPUT_SIZE {
+            buf = &buf[0..MAX_INPUT_SIZE];
+        }
+
+        emu.write_mem(input_addr_end - buf.len() as u64, buf);
+        emu.write_reg(RegisterARM64::SP, input_addr_end);
+
+        emu.run();
+
+        return ExitKind::Ok;
+    };
+
     let executor = InProcessExecutor::new(
-        &mut binding,
+        &mut harness,
         tuple_list!(edges_observer, time_observer),
         &mut fuzzer,
         &mut state,
@@ -134,5 +139,5 @@ fn main() {
             return;
         }
     }
-    runFuzzer();
+    fuzzer();
 }
