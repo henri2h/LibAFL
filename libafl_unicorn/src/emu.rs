@@ -4,7 +4,7 @@ use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, NasmFormatter};
 pub use libafl_targets::{edges_max_num, EDGES_MAP, EDGES_MAP_PTR, EDGES_MAP_SIZE, MAX_EDGES_NUM};
 use unicorn_engine::{
     unicorn_const::{uc_error, Arch, HookType, MemType, Mode, Permission, SECOND_SCALE},
-    RegisterARM64, RegisterX86, Unicorn,
+    RegisterARM, RegisterARM64, RegisterX86, Unicorn,
 };
 
 static DEBUG: bool = false;
@@ -24,8 +24,16 @@ pub struct Emulator {
 
 impl Emulator {
     pub fn new(arch: Arch) -> Emulator {
-        let emu = unicorn_engine::Unicorn::new(arch, Mode::MODE_64)
-            .expect("failed to initialize Unicorn instance");
+        let emu = unicorn_engine::Unicorn::new(
+            arch,
+            match arch {
+                Arch::ARM => Mode::ARM,
+                Arch::ARM64 => Mode::ARM,
+                Arch::X86 => Mode::MODE_64,
+                _ => Mode::MODE_64,
+            },
+        )
+        .expect("failed to initialize Unicorn instance");
         Emulator { emu, code_len: 0 }
     }
 
@@ -42,6 +50,13 @@ impl Emulator {
     }
 
     pub fn write_mem(&mut self, addr: u64, buf: &[u8]) {
+        //println!("{} -> {}", addr, addr + (buf.len() as u64));
+        self.emu
+            .mem_write(addr, &buf)
+            .expect("failed to write instructions");
+    }
+
+    pub fn positioned_write(&mut self, addr: u64, end_addr: u64, buf: &[u8]) {
         //println!("{} -> {}", addr, addr + (buf.len() as u64));
         self.emu
             .mem_write(addr, &buf)
@@ -93,7 +108,12 @@ fn load_code(emu: &mut Unicorn<()>, address: u64, path: &str) -> u64 {
     // Define memory regions
     emu.mem_map(
         address,
-        ((arm_code.len() / 4096) + 1) * 4096,
+        match emu.get_arch() {
+            Arch::ARM => ((arm_code.len() / 1024) + 1) * 1024,
+            Arch::ARM64 => ((arm_code.len() / 1024) + 1) * 1024,
+            Arch::X86 => ((arm_code.len() / 4096) + 1) * 4096,
+            _ => 0,
+        },
         Permission::EXEC,
     )
     .expect("failed to map code page");
@@ -117,7 +137,10 @@ fn debug_print(emu: &mut Unicorn<()>, err: uc_error) {
     let arch = emu.get_arch();
 
     match arch {
-        Arch::ARM | Arch::ARM64 => {
+        Arch::ARM => {
+            println!("SP: {:X}", emu.reg_read(RegisterARM::SP).unwrap());
+        }
+        Arch::ARM64 => {
             println!("SP: {:X}", emu.reg_read(RegisterARM64::SP).unwrap());
             println!("X0: {:X}", emu.reg_read(RegisterARM64::X0).unwrap());
             println!("X1: {:X}", emu.reg_read(RegisterARM64::X1).unwrap());
@@ -172,8 +195,6 @@ fn debug_print(emu: &mut Unicorn<()>, err: uc_error) {
                         output.clear();
                         formatter.format(&instruction, &mut output);
 
-                        // Eg. "00007FFAC46ACDB2 488DAC2400FFFFFF     lea       rbp,[rsp-100h]"
-
                         let diff = instruction.ip() as i64 - pc as i64;
                         print!("{:02}\t{:016X} ", diff, instruction.ip());
                         let start_index = (instruction.ip() - begin) as usize;
@@ -222,14 +243,12 @@ fn callback(
     return true;
 }
 
-pub fn emulate() {
-    let mem_data = [0x50, 0x24, 0x0];
-    // TODO
-}
-
 pub fn prog(emu: &mut unicorn_engine::Unicorn<'static, ()>, arm_code_len: u64) {
     let result = emu.emu_start(
-        CODE_ADDRESS, // + 0x40, // start at main. Position of main: 0x40
+        match emu.get_arch() {
+            Arch::ARM64 => CODE_ADDRESS + 0x40, // Position of main: 0x40 TODO: see if possible to get the main position from header file. Seems weird doing so
+            _ => CODE_ADDRESS,
+        },
         CODE_ADDRESS + arm_code_len,
         10 * SECOND_SCALE,
         0x1000,

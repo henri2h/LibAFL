@@ -5,6 +5,7 @@ pub mod hooks;
 use std::{char::MAX, env, path::PathBuf, time::Duration};
 
 use emu::Emulator;
+use iced_x86::Register;
 use libafl::{
     bolts::{current_nanos, rands::StdRand, tuples::tuple_list, AsSlice},
     corpus::{InMemoryCorpus, OnDiskCorpus},
@@ -23,19 +24,25 @@ use libafl::{
     state::StdState,
 };
 pub use libafl_targets::{EDGES_MAP_PTR, EDGES_MAP_SIZE};
-use unicorn_engine::{unicorn_const::Arch, RegisterARM64, RegisterX86};
+use unicorn_engine::{unicorn_const::Arch, RegisterARM, RegisterARM64, RegisterX86};
 
 pub const MAX_INPUT_SIZE: usize = 0x8000; //1048576; // 1MB
 
 // emulating
 fn fuzzer(should_emulate: bool) {
+    let arch = Arch::ARM64;
     let input_addr_end: u64 = 0x8000;
     let input_addr_start: u64 = input_addr_end - MAX_INPUT_SIZE as u64;
-    let emu = &mut Emulator::new(unicorn_engine::unicorn_const::Arch::X86);
+    let emu = &mut Emulator::new(arch);
     emu.setup(
         input_addr_start,
         MAX_INPUT_SIZE,
-        "libafl_unicorn_test/foo_x86",
+        match arch {
+            Arch::ARM => "libafl_unicorn_test/foo_arm",
+            Arch::ARM64 => "libafl_unicorn_test/foo_arm64",
+            Arch::X86 => "libafl_unicorn_test/foo_x86",
+            _ => "",
+        },
     );
     emu.set_code_hook();
 
@@ -50,10 +57,12 @@ fn fuzzer(should_emulate: bool) {
         emu.write_mem(input_addr_end - buf.len() as u64, buf);
 
         match emu.get_arch() {
-            Arch::ARM | Arch::ARM64 => {
-                emu.write_reg(RegisterX86::SP, input_addr_end);
+            Arch::ARM => {
+                emu.write_reg(RegisterARM::SP, input_addr_end);
             }
-
+            Arch::ARM64 => {
+                emu.write_reg(RegisterARM64::SP, input_addr_end);
+            }
             Arch::X86 => {
                 // clean emulator state
                 for i in 1..259 {
@@ -71,6 +80,7 @@ fn fuzzer(should_emulate: bool) {
     };
 
     if should_emulate {
+        println!("Starting emulation:");
         let mem_data: Vec<u8> = vec![0x50, 0x24, 0x0];
         harness(&BytesInput::from(mem_data));
         return;
