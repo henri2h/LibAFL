@@ -13,19 +13,19 @@ assembly_arm:
 binary_arm:
 	$(arm)-as foo_arm.s -o foo_arm
 
-assembly_x64:
-	$(x64)-gcc -O2 -S -c foo.c -o foo_x64.s
+assembly_x86:
+	$(x64)-gcc -O2 -S -c foo.c -o foo_x86.s
 
-binary_x64:
-	$(x64)-as foo_x64.s -o foo_x64
+binary_x86:
+	$(x64)-as foo_x86.s -o foo_x86
 
 build_arm: assembly_arm binary_arm
 build_arm64: assembly_arm64 binary_arm64
-build_x64: assembly_x64 binary_x64
+build_x86: assembly_x86 binary_x86
 
 clean:
 	rm foo_*
 
 
-all: build_arm build_arm64 build_x64
+all: build_arm build_arm64 build_x86
 # sudo apt install gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu

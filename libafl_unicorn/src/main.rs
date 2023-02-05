@@ -23,17 +23,58 @@ use libafl::{
     state::StdState,
 };
 pub use libafl_targets::{EDGES_MAP_PTR, EDGES_MAP_SIZE};
-use unicorn_engine::RegisterARM64;
+use unicorn_engine::{unicorn_const::Arch, RegisterARM64, RegisterX86};
 
-pub const MAX_INPUT_SIZE: usize = 0x1000; //1048576; // 1MB
+pub const MAX_INPUT_SIZE: usize = 0x8000; //1048576; // 1MB
 
 // emulating
-fn fuzzer() {
+fn fuzzer(should_emulate: bool) {
     let input_addr_end: u64 = 0x8000;
     let input_addr_start: u64 = input_addr_end - MAX_INPUT_SIZE as u64;
-    let emu = &mut Emulator::new();
-    emu.setup(input_addr_start, MAX_INPUT_SIZE);
+    let emu = &mut Emulator::new(unicorn_engine::unicorn_const::Arch::X86);
+    emu.setup(
+        input_addr_start,
+        MAX_INPUT_SIZE,
+        "libafl_unicorn_test/foo_x86",
+    );
     emu.set_code_hook();
+
+    let mut harness = |input: &BytesInput| {
+        let target = input.target_bytes();
+        let mut buf = target.as_slice();
+        let len = buf.len();
+        if len > MAX_INPUT_SIZE {
+            buf = &buf[0..MAX_INPUT_SIZE];
+        }
+
+        emu.write_mem(input_addr_end - buf.len() as u64, buf);
+
+        match emu.get_arch() {
+            Arch::ARM | Arch::ARM64 => {
+                emu.write_reg(RegisterX86::SP, input_addr_end);
+            }
+
+            Arch::X86 => {
+                // clean emulator state
+                for i in 1..259 {
+                    emu.write_reg(i, 0);
+                }
+
+                emu.write_reg(RegisterX86::ESP, input_addr_end);
+            }
+            _ => {}
+        }
+
+        emu.run();
+
+        return ExitKind::Ok;
+    };
+
+    if should_emulate {
+        let mem_data: Vec<u8> = vec![0x50, 0x24, 0x0];
+        harness(&BytesInput::from(mem_data));
+        return;
+    }
 
     let timeout = Duration::from_secs(1);
 
@@ -87,22 +128,6 @@ fn fuzzer() {
     // A fuzzer with feedbacks and a corpus scheduler
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
-    let mut harness = |input: &BytesInput| {
-        let target = input.target_bytes();
-        let mut buf = target.as_slice();
-        let len = buf.len();
-        if len > MAX_INPUT_SIZE {
-            buf = &buf[0..MAX_INPUT_SIZE];
-        }
-
-        emu.write_mem(input_addr_end - buf.len() as u64, buf);
-        emu.write_reg(RegisterARM64::SP, input_addr_end);
-
-        emu.run();
-
-        return ExitKind::Ok;
-    };
-
     let executor = InProcessExecutor::new(
         &mut harness,
         tuple_list!(edges_observer, time_observer),
@@ -133,11 +158,11 @@ fn fuzzer() {
 
 fn main() {
     let args: Vec<_> = env::args().collect();
+    let mut emu = false;
     if args.len() > 1 {
         if args[1] == "emu" {
-            emu::emulate();
-            return;
+            emu = true;
         }
     }
-    fuzzer();
+    fuzzer(emu);
 }

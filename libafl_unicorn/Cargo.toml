@@ -17,3 +17,4 @@ libafl_targets = { path = "../libafl_targets", version = "0.8.2" }
 hashbrown =  { version = "0.12", features = ["serde", "ahash-compile-time-rng"] } # A faster hashmap, nostd compatible
 
 unicorn-engine = "2.0.1"
+iced-x86 = "1.18.0"
