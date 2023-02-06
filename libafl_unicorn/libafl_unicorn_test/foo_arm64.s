@@ -11,20 +11,21 @@ main:
 	.cfi_startproc
 	sub	sp, sp, #16
 	.cfi_def_cfa_offset 16
+	mov	w0, 1
 	strb	wzr, [sp, 15]
-	strb	wzr, [sp, 15]
+	strb	w0, [sp, 15]
 	ldrb	w1, [sp, 13]
 	ldrb	w0, [sp, 14]
 	and	w0, w0, 255
 	cmp	w0, w1, uxtb
 	bcs	.L3
-	mov	w0, 1
+	mov	w0, 2
 	strb	w0, [sp, 15]
 	ldrb	w0, [sp, 13]
 	and	w0, w0, 255
 	cmp	w0, 32
 	bls	.L3
-	mov	w0, 2
+	mov	w0, 3
 	strb	w0, [sp, 15]
 	ldrb	w0, [sp, 13]
 	and	w0, w0, 255
@@ -39,13 +40,13 @@ main:
 	ret
 .L7:
 	.cfi_restore_state
-	mov	w0, 3
+	mov	w0, 4
 	strb	w0, [sp, 15]
 	ldrb	w0, [sp, 14]
 	and	w0, w0, 255
 	cmp	w0, 36
 	bne	.L3
-	mov	w0, 4
+	mov	w0, 5
 	strb	w0, [sp, 15]
 	b	.L3
 	.cfi_endproc

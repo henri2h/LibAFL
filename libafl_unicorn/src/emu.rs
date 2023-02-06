@@ -7,7 +7,7 @@ use unicorn_engine::{
     RegisterARM, RegisterARM64, RegisterX86, Unicorn,
 };
 
-static DEBUG: bool = false;
+static DEBUG: bool = true;
 
 static CODE_ADDRESS: u64 = 0x9000;
 static HEXBYTES_COLUMN_BYTE_LENGTH: usize = 10;
@@ -65,7 +65,7 @@ impl Emulator {
 
     pub fn set_memory_hook(&mut self, addr: u64, length: u64) {
         self.emu
-            .add_mem_hook(HookType::MEM_ALL, addr - length, addr, callback)
+            .add_mem_hook(HookType::MEM_ALL, addr, addr + length, callback)
             .expect("Failed to register watcher");
     }
 
@@ -216,7 +216,7 @@ fn debug_print(emu: &mut Unicorn<()>, err: uc_error) {
 }
 
 fn callback(
-    _unicorn: &mut unicorn_engine::Unicorn<()>,
+    emu: &mut unicorn_engine::Unicorn<()>,
     mem: MemType,
     address: u64,
     size: usize,
@@ -225,17 +225,25 @@ fn callback(
     if DEBUG {
         match mem {
             MemType::WRITE => println!(
-                "Memory is being WRITTEN at adress: {:X} size: {} value: {}",
-                address, size, value
+                "0x{:X}\tMemory is being WRITTEN at adress: {:X} size: {} value: {}",
+                emu.pc_read().unwrap(),
+                address,
+                size,
+                value
             ),
             MemType::READ => println!(
-                "Memory is being READ at adress: {:X} size: {}",
-                address, size
+                "0x{}\tMemory is being READ at adress: {:X} size: {}",
+                emu.pc_read().unwrap(),
+                address,
+                size
             ),
-
             _ => println!(
-                "Memory access type: {:?} adress: {:X} size: {} value: {}",
-                mem, address, size, value
+                "0x{}\tMemory access type: {:?} adress: {:X} size: {} value: {}",
+                emu.pc_read().unwrap(),
+                mem,
+                address,
+                size,
+                value
             ),
         }
     }
@@ -283,7 +291,7 @@ pub fn prog(emu: &mut unicorn_engine::Unicorn<'static, ()>, arm_code_len: u64) {
                     .expect("Could not read memory");
 
                 // check result
-                if buf[0] != 0x4 {
+                if buf[0] != 0x5 {
                     // didn't found the correct value
                     if DEBUG {
                         println!("Incorrect output found!");

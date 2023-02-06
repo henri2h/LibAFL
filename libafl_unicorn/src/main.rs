@@ -30,7 +30,7 @@ pub const MAX_INPUT_SIZE: usize = 0x8000; //1048576; // 1MB
 
 // emulating
 fn fuzzer(should_emulate: bool) {
-    let arch = Arch::ARM64;
+    let arch = Arch::X86;
     let input_addr_end: u64 = 0x8000;
     let input_addr_start: u64 = input_addr_end - MAX_INPUT_SIZE as u64;
     let emu = &mut Emulator::new(arch);

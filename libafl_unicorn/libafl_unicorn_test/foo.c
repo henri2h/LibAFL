@@ -11,14 +11,14 @@ int main() {
   for(int i = 0; i< len; i++){
     f[i] = i;
   }*/
-  c = 0x0;
+  c = 0x1;
   if (a > b) {
-    c = 0x1;
+    c = 0x2;
     if (a > 0x20) {
-      c = 0x2;
+      c = 0x3;
       if (a == 0x50) {
-        c = 0x3;
-        if (b == 0x24) { c = 0x4; }
+        c = 0x4;
+        if (b == 0x24) { c = 0x5; }
       }
     }
   }

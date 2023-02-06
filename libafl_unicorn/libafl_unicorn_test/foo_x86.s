@@ -9,16 +9,16 @@ main:
 	.cfi_startproc
 	endbr64
 	movb	$0, -1(%rsp)
-	movb	$0, -1(%rsp)
+	movb	$1, -1(%rsp)
 	movzbl	-3(%rsp), %eax
 	movzbl	-2(%rsp), %edx
 	cmpb	%al, %dl
 	jnb	.L3
-	movb	$1, -1(%rsp)
+	movb	$2, -1(%rsp)
 	movzbl	-3(%rsp), %eax
 	cmpb	$32, %al
 	jbe	.L3
-	movb	$2, -1(%rsp)
+	movb	$3, -1(%rsp)
 	movzbl	-3(%rsp), %eax
 	cmpb	$80, %al
 	je	.L6
@@ -26,11 +26,11 @@ main:
 	movzbl	-1(%rsp), %eax
 	ret
 .L6:
-	movb	$3, -1(%rsp)
+	movb	$4, -1(%rsp)
 	movzbl	-2(%rsp), %eax
 	cmpb	$36, %al
 	jne	.L3
-	movb	$4, -1(%rsp)
+	movb	$5, -1(%rsp)
 	jmp	.L3
 	.cfi_endproc
 .LFE0:

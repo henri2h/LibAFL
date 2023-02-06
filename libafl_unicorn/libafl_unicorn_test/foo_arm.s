@@ -25,19 +25,20 @@ main:
 	@ frame_needed = 0, uses_anonymous_args = 0
 	@ link register save eliminated.
 	sub	sp, sp, #8
-	movs	r3, #0
-	strb	r3, [sp, #7]
+	movs	r2, #0
+	movs	r3, #1
+	strb	r2, [sp, #7]
 	strb	r3, [sp, #7]
 	ldrb	r2, [sp, #5]	@ zero_extendqisi2
 	ldrb	r3, [sp, #6]	@ zero_extendqisi2
 	cmp	r2, r3
 	bls	.L3
-	movs	r3, #1
+	movs	r3, #2
 	strb	r3, [sp, #7]
 	ldrb	r3, [sp, #5]	@ zero_extendqisi2
 	cmp	r3, #32
 	bls	.L3
-	movs	r3, #2
+	movs	r3, #3
 	strb	r3, [sp, #7]
 	ldrb	r3, [sp, #5]	@ zero_extendqisi2
 	cmp	r3, #80
@@ -48,12 +49,12 @@ main:
 	@ sp needed
 	bx	lr
 .L7:
-	movs	r3, #3
+	movs	r3, #4
 	strb	r3, [sp, #7]
 	ldrb	r3, [sp, #6]	@ zero_extendqisi2
 	cmp	r3, #36
 	itt	eq
-	moveq	r3, #4
+	moveq	r3, #5
 	strbeq	r3, [sp, #7]
 	b	.L3
 	.size	main, .-main
