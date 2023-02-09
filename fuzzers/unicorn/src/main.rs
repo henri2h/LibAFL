@@ -1,11 +1,6 @@
-pub mod emu;
-pub mod helper;
-pub mod hooks;
+use libafl_unicorn::emu::{Emulator, CODE_ADDRESS};
+use std::{env, path::PathBuf, time::Duration};
 
-use std::{char::MAX, env, path::PathBuf, time::Duration};
-
-use emu::Emulator;
-use iced_x86::Register;
 use libafl::{
     bolts::{current_nanos, rands::StdRand, tuples::tuple_list, AsSlice},
     corpus::{InMemoryCorpus, OnDiskCorpus},
@@ -24,9 +19,10 @@ use libafl::{
     state::StdState,
 };
 pub use libafl_targets::{EDGES_MAP_PTR, EDGES_MAP_SIZE};
-use unicorn_engine::{unicorn_const::Arch, RegisterARM, RegisterARM64, RegisterX86};
+use unicorn_engine::unicorn_const::{Arch, MemType, SECOND_SCALE};
 
 pub const MAX_INPUT_SIZE: usize = 0x8000; //1048576; // 1MB
+pub const DEBUG: bool = false;
 
 // emulating
 fn fuzzer(should_emulate: bool) {
@@ -45,6 +41,7 @@ fn fuzzer(should_emulate: bool) {
         },
     );
     emu.set_code_hook();
+    emu.set_memory_hook(input_addr_start, MAX_INPUT_SIZE, callback);
 
     let mut harness = |input: &BytesInput| {
         let target = input.target_bytes();
@@ -56,25 +53,69 @@ fn fuzzer(should_emulate: bool) {
 
         emu.write_mem(input_addr_end - buf.len() as u64, buf);
 
-        match emu.get_arch() {
-            Arch::ARM => {
-                emu.write_reg(RegisterARM::SP, input_addr_end);
+        emu.init_registers(input_addr_end);
+
+        let result = emu.emu_start(
+            match emu.get_arch() {
+                Arch::ARM64 => CODE_ADDRESS + 0x40, // Position of main: 0x40 TODO: see if possible to get the main position from header file. Seems weird doing so
+                _ => CODE_ADDRESS,
+            },
+            CODE_ADDRESS + emu.get_code_len(),
+            10 * SECOND_SCALE,
+            0x1000,
+        );
+
+        match result {
+            Ok(_) => {
+                // never hapens
+                panic!("huh");
             }
-            Arch::ARM64 => {
-                emu.write_reg(RegisterARM64::SP, input_addr_end);
-            }
-            Arch::X86 => {
-                // clean emulator state
-                for i in 1..259 {
-                    emu.write_reg(i, 0);
+            Err(err) => {
+                let mut instruction = [0];
+
+                let pc = emu.pc_read().unwrap();
+                let sp = emu.get_stack_pointer();
+
+                if emu.get_arch() == Arch::X86 {
+                    emu.mem_read(pc, &mut instruction)
+                        .expect("could not read at pointer address");
                 }
 
-                emu.write_reg(RegisterX86::ESP, input_addr_end);
-            }
-            _ => {}
-        }
+                if pc == 0 || instruction[0] == 0xC3 {
+                    // Did we reached the beginning of the stack or is it a return ?
+                    if DEBUG {
+                        println!("Reached start");
+                    }
 
-        emu.run();
+                    // check output
+                    let mut buf: [u8; 1] = [0];
+
+                    emu.mem_read(sp - 1, &mut buf)
+                        .expect("Could not read memory");
+
+                    // check result
+                    if buf[0] != 0x5 {
+                        // didn't found the correct value
+                        if DEBUG {
+                            println!("Incorrect output found!");
+                            println!("Output: {:#}", buf[0]);
+
+                            emu.memory_dump(2);
+                        }
+                        return ExitKind::Ok;
+                    }
+
+                    // success
+                    println!("Correct input found");
+                    println!("Output: {:#}", buf[0]);
+                    emu.memory_dump(2);
+
+                    panic!("Success :)");
+                } else {
+                    emu.debug_print(err);
+                }
+            }
+        }
 
         return ExitKind::Ok;
     };
@@ -164,6 +205,42 @@ fn fuzzer(should_emulate: bool) {
     fuzzer
         .fuzz_loop(&mut stages, &mut executor, &mut state, &mut mgr)
         .expect("Error in the fuzzing loop");
+}
+
+fn callback(
+    emu: &mut unicorn_engine::Unicorn<()>,
+    mem: MemType,
+    address: u64,
+    size: usize,
+    value: i64,
+) -> bool {
+    if DEBUG {
+        match mem {
+            MemType::WRITE => println!(
+                "0x{:X}\tMemory is being WRITTEN at adress: {:X} size: {} value: {}",
+                emu.pc_read().unwrap(),
+                address,
+                size,
+                value
+            ),
+            MemType::READ => println!(
+                "0x{}\tMemory is being READ at adress: {:X} size: {}",
+                emu.pc_read().unwrap(),
+                address,
+                size
+            ),
+            _ => println!(
+                "0x{}\tMemory access type: {:?} adress: {:X} size: {} value: {}",
+                emu.pc_read().unwrap(),
+                mem,
+                address,
+                size,
+                value
+            ),
+        }
+    }
+
+    return true;
 }
 
 fn main() {

@@ -1,8 +1,8 @@
 [package]
-name = "unicorn_test"
+name = "libafl_unicorn"
 version.workspace = true
 authors = [""]
-description = "Frida backend library for LibAFL"
+description = "Unicorn backend library for LibAFL"
 documentation = "https://docs.rs/"
 repository = "https://github.com/AFLplusplus/"
 readme = "../README.md"
@@ -18,3 +18,7 @@ hashbrown =  { version = "0.12", features = ["serde", "ahash-compile-time-rng"] 
 
 unicorn-engine = "2.0.1"
 iced-x86 = "1.18.0"
+
+[lib]
+name = "libafl_unicorn"
+crate-type = ["cdylib", "rlib"]
